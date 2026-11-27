@@ -83,6 +83,7 @@ button{font:inherit;color:inherit;cursor:pointer}
 .catrow{display:grid;grid-template-columns:12px 1fr auto;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--line)}.catrow:first-child{border-top:0}.catrow.off b{color:var(--muted);text-decoration:line-through}
 .catrow .acts{display:flex;gap:4px}.catrow .acts button{border:0;background:var(--sunk);color:var(--fg);border-radius:9px;padding:6px 9px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
 .catedit{display:grid;gap:8px;padding:10px 0 4px;grid-column:1/-1}
+.item.recat{cursor:pointer}.item.recat .t small::after{content:" · змінити ›";color:var(--accent);font-weight:600}
 .acc:first-child{border-top:0}.acc.tot{font-weight:700}.acc .del{color:var(--accent);font-weight:700}
 .chips button[data-accf]{border:0;cursor:pointer;background:var(--sunk);color:var(--fg);padding:8px 14px}
 .chips button[data-accf][aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
@@ -260,6 +261,12 @@ function catsSheet(){
       box.innerHTML=`<label class="f">${n?`Операції (${n}) перенести в`:"Видалити категорію? Якщо вона з'явиться в нових операціях, піде в"}<select>${ALLCATS().filter(c=>c!==x).map(c=>`<option ${c==="Інше"?"selected":""}>${esc(c)}</option>`).join("")}</select></label><div class="grid2"><button class="btn sm">Видалити</button><button class="btn sm ghost">Скасувати</button></div>`;
       const [ok,no]=box.querySelectorAll("button");no.onclick=()=>{box.hidden=true};ok.onclick=()=>{const to=box.querySelector("select").value;deleteCat(x,to);redraw();toast("Категорію «"+x+"» видалено")}})};
   openSheet("Категорії витрат",`<div id="catsRoot">${body()}</div>`,wire)}
+function recatSheet(id){const t=state.tx.find(x=>x.id===id);if(!t)return;
+  openSheet("Розсортувати «Інше»",`<div class="note"><b>${esc(t.note||"Без опису")}</b><br>${t.date.split("-").reverse().join(".")} · −${money(t.amount,t.cur||"UAH")} · ${esc(accName(t.acc))}</div>
+    <label class="f" for="rcSel">Категорія<select id="rcSel" data-catsel="1">${catOptions("exp","Інше")}</select></label>
+    <button class="btn" id="rcGo">Зберегти</button>`,()=>{const sel=document.getElementById("rcSel");bindNewCat(sel);
+      document.getElementById("rcGo").onclick=async()=>{const v=sel.value;if(v==="__new"||v==="Інше"){closeSheet();return}
+        await patchTx(t,{cat:v});closeSheet();render();toast("Перенесено в «"+v+"»")}})}
 function bindNewCat(sel){if(!sel||sel._nc)return;sel._nc=1;let prev=sel.value==="__new"?"Інше":sel.value;
   sel.addEventListener("change",()=>{if(sel.value!=="__new"){prev=sel.value;return}
     const box=document.createElement("div");box.className="newcat";box.innerHTML=`<input maxlength="30" placeholder="Назва нової категорії" aria-label="Назва нової категорії"><button type="button" class="btn sm">Додати</button><button type="button" class="btn sm ghost">Скасувати</button>`;
@@ -435,7 +442,7 @@ function txRow(t){
   const inc=t.type==="inc",tr=t.type==="tr";const cur=t.cur||"UAH";
   const conv=cur!=="UAH"?`<small>≈ ${uah(toUAH(Number(t.amount),cur))}</small>`:"";
   const [y,m,d]=(t.date||"").split("-");
-  return `<div class="sw" data-sw="${esc(t.id)}"><div class="sw-left"><button class="sw-tr" data-swtr="${esc(t.id)}" tabindex="-1">${isCashDep(t)?"Це дохід":tr?"Не переказ":inc&&t.acc!=="cash"?"З готівки":"Переказ"}</button></div><div class="sw-act"><button class="sw-del" data-swdel="${esc(t.id)}" tabindex="-1">Видалити</button></div><div class="item ${tr?"is-tr":""}"><i class="dot" style="background:${catColor(t.cat)}"></i>
+  return `<div class="sw" data-sw="${esc(t.id)}"><div class="sw-left"><button class="sw-tr" data-swtr="${esc(t.id)}" tabindex="-1">${isCashDep(t)?"Це дохід":tr?"Не переказ":inc&&t.acc!=="cash"?"З готівки":"Переказ"}</button></div><div class="sw-act"><button class="sw-del" data-swdel="${esc(t.id)}" tabindex="-1">Видалити</button></div><div class="item ${tr?"is-tr":""} ${t.type==="exp"&&t.cat==="Інше"?"recat":""}"><i class="dot" style="background:${catColor(t.cat)}"></i>
     <div class="t"><b>${isCashDep(t)?"Внесено готівкою на картку":esc(t.note||t.cat)}</b><small>${isCashDep(t)?"не дохід · Готівка → "+esc(accName(t.to)):tr&&t.to?esc(accName(t.acc)+" → "+accName(t.to)):tr?"переказ · "+(t.dir==="in"?"надійшло":"списано")+" · "+esc(accName(t.acc)):esc(t.cat)+" · "+esc(accName(t.acc))} · ${d}.${m}${t.example?" · приклад":""}</small></div>
     <div class="amt ${inc?"inc":""}">${isCashDep(t)?"+":tr&&t.to?"⇄ ":tr?(t.dir==="in"?"↓ ":"↑ "):inc?"+":"−"}${money(Number(t.amount),cur)}${conv}</div></div></div>`;
 }
@@ -853,13 +860,15 @@ document.getElementById("undoBtn").onclick=async()=>{if(!undoBuf)return;const t=
   view.addEventListener("pointermove",e=>{if(!sw)return;const dx=e.clientX-sw.x0,dy=e.clientY-sw.y0;
     if(!sw.dir){if(Math.abs(dx)>8&&Math.abs(dx)>Math.abs(dy)){sw.dir="h";sw.el.classList.add("drag");try{sw.el.setPointerCapture(sw.id)}catch(err){}}else if(Math.abs(dy)>8){sw=null;return}else return}
     const x=sw.base+dx;sw.x=x;setX(sw.el,x)});
-  const end=()=>{if(!sw)return;const s=sw;sw=null;if(s.dir!=="h")return;s.el.classList.remove("drag");const w=s.el.offsetWidth;
+  const end=()=>{if(!sw)return;const s=sw;sw=null;if(s.dir!=="h")return;lastDrag=Date.now();s.el.classList.remove("drag");const w=s.el.offsetWidth;
     if(s.x<-w*0.55){s.el.querySelector(".item").style.transform=`translateX(${-w}px)`;openEl=null;setTimeout(()=>deleteWithUndo(s.el.dataset.sw),180)}
     else if(s.x>w*0.5){setX(s.el,0);openEl=null;toggleTr(s.el.dataset.sw)}
     else if(s.x<-48){setX(s.el,-OPEN);s.el._open=-OPEN;openEl=s.el}
     else if(s.x>48){setX(s.el,OPENL);s.el._open=OPENL;openEl=s.el}
     else{setX(s.el,0);s.el._open=0;if(openEl===s.el)openEl=null}};
   view.addEventListener("pointerup",end);view.addEventListener("pointercancel",()=>{if(sw){setX(sw.el,sw.base);sw=null}});
+  let lastDrag=0;
+  view.addEventListener("click",e=>{const it=e.target.closest(".sw .item.recat");if(it&&Date.now()-lastDrag>400){const el=it.closest(".sw");if(el._open&&openEl===el){closeOpen(null);return}e.stopPropagation();recatSheet(el.dataset.sw);return}},true);
   view.addEventListener("click",e=>{const b=e.target.closest("[data-swdel]");if(b){e.stopPropagation();openEl=null;deleteWithUndo(b.dataset.swdel);return}
     const tb=e.target.closest("[data-swtr]");if(tb){e.stopPropagation();openEl=null;toggleTr(tb.dataset.swtr)}},true);
   document.addEventListener("pointerdown",e=>{if(!e.target.closest(".sw"))closeOpen(null)});
