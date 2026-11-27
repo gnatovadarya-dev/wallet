@@ -81,7 +81,12 @@ button{font:inherit;color:inherit;cursor:pointer}
 .sw .item{border-top:0;position:relative;background:var(--surface);touch-action:pan-y;transition:transform .25s ease;will-change:transform}
 .sw.drag .item{transition:none}
 .sw+.sw{border-top:1px solid var(--line)}
-.sw-act{position:absolute;inset:1px 0;display:flex;justify-content:flex-end;background:var(--bad);border-radius:12px}
+.sw-act{position:absolute;inset:1px 0 1px 50%;display:flex;justify-content:flex-end;background:var(--bad);border-radius:12px}
+.sw-left{position:absolute;inset:1px 50% 1px 0;display:flex;justify-content:flex-start;background:var(--accent);border-radius:12px}
+.sw-tr{border:0;background:none;color:var(--accent-ink);font-weight:700;font-size:14px;min-width:120px;padding:0 16px}
+.item.is-tr{opacity:.62}.item.is-tr .amt{color:var(--muted);font-weight:600}
+.trq{color:var(--warn);font-weight:700}
+.imp-row select.tsel{margin-right:6px;max-width:130px}
 .sw-del{border:0;background:none;color:#fff;font-weight:700;font-size:14px;min-width:96px;padding:0 16px}
 .undo{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom,0px));z-index:31;background:var(--fg);color:var(--bg);padding:8px 8px 8px 16px;border-radius:14px;font-weight:600;font-size:14px;display:flex;align-items:center;gap:12px;max-width:92vw}
 .undo button{border:0;border-radius:10px;padding:8px 12px;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:14px}
@@ -183,7 +188,8 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 
 <script src="xlsx.full.min.js" defer></script>
 <script>
-const EXP_CATS=["Продукти","Кафе","Транспорт","Житло","Комуналка","Здоров'я","Одяг","Розваги","Підписки","Подарунки","Освіта","Інше"];
+const EXP_CATS=["Продукти","Кафе","Транспорт","Житло","Комуналка","Здоров'я","Одяг","Розваги","Підписки","Подарунки","Освіта","Комісії банку","Інше"];
+const TR_CAT="Переказ";
 const INC_CATS=["Зарплата","Підробіток","Подарунок","Повернення","Інше (дохід)"];
 const CURS=["UAH","EUR","USD"];
 const SYM={UAH:"₴",EUR:"€",USD:"$"};
@@ -204,7 +210,7 @@ function uah(n){return nf.format(Math.round(n))+" ₴"}
 function money(a,c){return nf2.format(a)+" "+SYM[c]}
 function toUAH(a,c){return c==="UAH"?a:a*(Number(state.settings.rates[c])||0)}
 function esc(s){return String(s??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]))}
-function catColor(cat){const all=[...EXP_CATS,...INC_CATS];const i=Math.max(0,all.indexOf(cat));return `var(--c${(i%8)+1})`}
+function catColor(cat){if(cat===TR_CAT)return "var(--muted)";const all=[...EXP_CATS,...INC_CATS];const i=Math.max(0,all.indexOf(cat));return `var(--c${(i%8)+1})`}
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(()=>t.hidden=true,2200)}
 function uid(){return Math.random().toString(36).slice(2,10)}
 
@@ -286,7 +292,7 @@ function monthTx(m){return state.tx.filter(t=>(t.date||"").startsWith(m))}
 function sums(m){
   let inc=0,exp=0;const byCat={};
   for(const t of monthTx(m)){const v=toUAH(Number(t.amount)||0,t.cur||"UAH");
-    if(t.type==="inc")inc+=v;else{exp+=v;byCat[t.cat]=(byCat[t.cat]||0)+v}}
+    if(t.type==="tr")continue;if(t.type==="inc")inc+=v;else{exp+=v;byCat[t.cat]=(byCat[t.cat]||0)+v}}
   return {inc,exp,bal:inc-exp,byCat};
 }
 function budgetStatus(m){
@@ -344,12 +350,12 @@ function bars(){
 
 /* ---------- views ---------- */
 function txRow(t){
-  const inc=t.type==="inc";const cur=t.cur||"UAH";
+  const inc=t.type==="inc",tr=t.type==="tr";const cur=t.cur||"UAH";
   const conv=cur!=="UAH"?`<small>≈ ${uah(toUAH(Number(t.amount),cur))}</small>`:"";
   const [y,m,d]=(t.date||"").split("-");
-  return `<div class="sw" data-sw="${esc(t.id)}"><div class="sw-act"><button class="sw-del" data-swdel="${esc(t.id)}" tabindex="-1">Видалити</button></div><div class="item"><i class="dot" style="background:${catColor(t.cat)}"></i>
-    <div class="t"><b>${esc(t.note||t.cat)}</b><small>${esc(t.cat)} · ${d}.${m}${t.example?" · приклад":""}</small></div>
-    <div class="amt ${inc?"inc":""}">${inc?"+":"−"}${money(Number(t.amount),cur)}${conv}</div></div></div>`;
+  return `<div class="sw" data-sw="${esc(t.id)}"><div class="sw-left"><button class="sw-tr" data-swtr="${esc(t.id)}" tabindex="-1">${tr?"Не переказ":"Переказ"}</button></div><div class="sw-act"><button class="sw-del" data-swdel="${esc(t.id)}" tabindex="-1">Видалити</button></div><div class="item ${tr?"is-tr":""}"><i class="dot" style="background:${catColor(t.cat)}"></i>
+    <div class="t"><b>${esc(t.note||t.cat)}</b><small>${tr?"переказ, не рахується · "+(t.dir==="in"?"надійшло":"списано"):esc(t.cat)} · ${d}.${m}${t.example?" · приклад":""}</small></div>
+    <div class="amt ${inc?"inc":""}">${tr?(t.dir==="in"?"↓ ":"↑ "):inc?"+":"−"}${money(Number(t.amount),cur)}${conv}</div></div></div>`;
 }
 function emptyBlock(){
   return `<div class="empty"><div>Тут з'являться Ваші доходи й витрати. Натисніть <b>+</b>, щоб додати операцію, або завантажте виписку з банку.</div>
@@ -374,15 +380,16 @@ function vOverview(){
 }
 function vOps(){
   const list=monthTx(state.month).sort((a,b)=>(b.date+(b.created||"")).localeCompare(a.date+(a.created||"")));
-  const dn=dupCount();
+  const dn=dupCount();const tn=transferCandidates().length;
   const imp=`<div class="card imp-card"><div class="top"><div><h2>Виписка з банку</h2><small style="color:var(--muted)">PDF, Excel або CSV з будь-якого банку</small></div><button class="btn sm" data-import="1">Імпорт</button></div>
-    ${dn?`<div class="top" style="border-top:1px solid var(--line);padding-top:12px"><small style="color:var(--muted)">Схоже на дублі: ${dn}</small><button class="btn sm ghost" id="dedupe">Прибрати дублікати</button></div>`:""}</div>`;
+    ${dn?`<div class="top" style="border-top:1px solid var(--line);padding-top:12px"><small style="color:var(--muted)">Схоже на дублі: ${dn}</small><button class="btn sm ghost" id="dedupe">Прибрати дублікати</button></div>`:""}
+    ${tn?`<div class="top" style="border-top:1px solid var(--line);padding-top:12px"><small style="color:var(--muted)">Схоже на перекази: ${tn}</small><button class="btn sm ghost" id="findTr">Знайти перекази</button></div>`:""}</div>`;
   if(!list.length)return imp+`<div class="card">${emptyBlock()}</div>`;
   return imp+vOpsList(list);
 }
 function vOpsList(list){
   const groups={};for(const t of list)(groups[t.date]=groups[t.date]||[]).push(t);
-  return Object.entries(groups).map(([d,ts])=>{const [,m,dd]=d.split("-");const net=ts.reduce((a,t)=>a+(t.type==="inc"?1:-1)*toUAH(Number(t.amount),t.cur),0);
+  return Object.entries(groups).map(([d,ts])=>{const [,m,dd]=d.split("-");const net=ts.reduce((a,t)=>a+(t.type==="tr"?0:t.type==="inc"?1:-1)*toUAH(Number(t.amount),t.cur),0);
     return `<div class="card"><div class="top"><h2>${Number(dd)} ${MONTHS_S[Number(m)-1]}</h2><span class="lbl">${net<0?"−":"+"}${uah(Math.abs(net))}</span></div><div class="list">${ts.map(txRow).join("")}</div></div>`}).join("");
 }
 function vBudget(){
@@ -473,7 +480,7 @@ const MCC=[[[5411,5412,5422,5441,5451,5462,5499,5300,5331],"Продукти"],[
   [[4111,4112,4121,4131,4784,4789,5541,5542,5172,7523,3000],"Транспорт"],[[5912,5122,8011,8021,8031,8041,8042,8043,8049,8050,8062,8071,8099],"Здоров'я"],
   [[5611,5621,5631,5641,5651,5655,5661,5691,5699,5311,5948],"Одяг"],[[7832,7841,7922,7929,7991,7996,7997,7998,7999,5813],"Розваги"],
   [[4899,5815,5816,5817,5818],"Підписки"],[[4814,4900],"Комуналка"],[[8211,8220,8241,8244,8249,8299,5942,5943],"Освіта"],[[5992,5947,5945],"Подарунки"]];
-const KW=[[/сільпо|silpo|атб|atb|novus|фора|fora|ашан|auchan|metro|varus|рукавичк|еко ?маркет|наш край|супермаркет|продукт|grocery/i,"Продукти"],
+const KW=[[/коміс|commission|fee\b/i,"Комісії банку"],[/сільпо|silpo|атб|atb|novus|фора|fora|ашан|auchan|metro|varus|рукавичк|еко ?маркет|наш край|супермаркет|продукт|grocery/i,"Продукти"],
   [/кафе|ресторан|кав'ярн|coffee|кава|mcdonald|kfc|пузата|піц|pizza|суші|sushi|glovo|bolt food|ресторан/i,"Кафе"],
   [/uber|bolt|uklon|таксі|taxi|wog|okko|socar|upg|brsm|азс|пальн|укрзалізниц|uz\.gov|метро|транспорт|автобус|парков/i,"Транспорт"],
   [/аптек|apteka|pharm|подорожник|бажаєм|здоров|медичн|клінік|стоматол|лаборатор|synevo|діла/i,"Здоров'я"],
@@ -585,8 +592,10 @@ function buildItems(){
     const isInc=a>0;const key=[date,a.toFixed(2),det.cur,desc.slice(0,40)].join("|");
     const dup=keys.has(key);const cand={type:isInc?"inc":"exp",cur:det.cur,amount:Math.abs(a),date};
     const manual=!dup&&state.tx.some(t=>!t.importKey&&!t.example&&sameOp(t,cand));
-    out.push({manual,date,amount:Math.abs(a),type:isInc?"inc":"exp",cur:det.cur,note:desc.slice(0,80),cat:guessCat(desc,bankCat,mcc,isInc),importKey:key,dup,on:!dup&&!manual&&!SKIP_RE.test(desc+" "+bankCat)});
+    const g=guessCat(desc,bankCat,mcc,isInc);
+    out.push({manual,date,amount:Math.abs(a),type:isInc?"inc":"exp",dir:isInc?"in":"out",cur:det.cur,note:desc.slice(0,80),cat:g,cat0:g,importKey:key,dup,on:!dup&&!manual,skip:SKIP_RE.test(desc+" "+bankCat)});
   }
+  classifyImport(out);
   imp.items=out.sort((a,b)=>b.date.localeCompare(a.date));
 }
 function impHelp(){return `<div class="note" style="display:grid;gap:8px">
@@ -628,18 +637,19 @@ function renderImport(){
       <label class="f" for="mCat">Категорія банку<select id="mCat" data-map="cat">${opt(det.map.cat,1)}</select></label>
       <label class="f" for="mCur">Валюта рахунку<select id="mCur">${curOptions(det.cur)}</select></label>
     </div></details>
-    <div class="note">Знайдено ${items.length} операцій${dups?`, з них ${dups} вже є в гаманці`:""}. Перекази між своїми рахунками я зняла з позначки, щоб вони не рахувалися як витрати. Перевірте категорії.</div>
+    <div class="note">Знайдено ${items.length} операцій${dups?`, з них ${dups} вже є в гаманці`:""}. ${items.some(x=>x.type==="tr")?`Перекази (${items.filter(x=>x.type==="tr").length}) я позначила окремо: вони не рахуються ні в доходах, ні у витратах.${items.some(x=>x.ask)?" Рядки з жовтою позначкою перевірте: це дохід чи переказ?":""}`:""} Перевірте категорії.</div>
     <div class="imp-list">${items.map((x,i)=>`<div class="imp-row ${x.dup?"dup":""}">
       <input type="checkbox" id="ic${i}" data-i="${i}" ${x.on?"checked":""} ${x.dup?"disabled":""} aria-label="Імпортувати">
-      <div style="min-width:0"><label for="ic${i}" style="font-weight:600;overflow-wrap:anywhere">${esc(x.note||"Без опису")}</label><br><small>${x.date.split("-").reverse().join(".")}${x.dup?" · вже є":x.manual?" · схоже, вже внесено вручну":""}</small><br>
-      <select id="icat${i}" data-ci="${i}" aria-label="Категорія">${catOptions(x.type,x.cat)}</select></div>
-      <div class="amt ${x.type==="inc"?"inc":""}">${x.type==="inc"?"+":"−"}${money(x.amount,x.cur)}</div></div>`).join("")||`<div class="empty">Нових операцій немає.</div>`}</div>
+      <div style="min-width:0"><label for="ic${i}" style="font-weight:600;overflow-wrap:anywhere">${esc(x.note||"Без опису")}</label><br><small>${x.date.split("-").reverse().join(".")}${x.dup?" · вже є":x.manual?" · схоже, вже внесено вручну":""}${x.reason?` · <span class="${x.ask?"trq":""}">${esc(x.reason)}</span>`:""}</small><br>
+      <select class="tsel" id="ityp${i}" data-ti="${i}" aria-label="Тип">${x.dir==="in"?`<option value="inc" ${x.type==="inc"?"selected":""}>Дохід</option>`:`<option value="exp" ${x.type==="exp"?"selected":""}>Витрата</option>`}<option value="tr" ${x.type==="tr"?"selected":""}>Переказ</option></select>${x.type==="tr"?"":`<select id="icat${i}" data-ci="${i}" aria-label="Категорія">${catOptions(x.type,x.cat)}</select>`}</div>
+      <div class="amt ${x.type==="inc"?"inc":""}" style="${x.type==="tr"?"color:var(--muted)":""}">${x.type==="tr"?(x.dir==="in"?"↓ ":"↑ "):x.type==="inc"?"+":"−"}${money(x.amount,x.cur)}</div></div>`).join("")||`<div class="empty">Нових операцій немає.</div>`}</div>
     <div class="prog" id="impProg" hidden><i></i></div>
     <button class="btn" id="impGo" ${on.length?"":"disabled"}>Додати ${on.length} операцій</button></div>`;
   out.querySelectorAll("[data-map]").forEach(s=>s.onchange=()=>{det.map[s.dataset.map]=+s.value;buildItems();renderImport()});
   document.getElementById("mCur").onchange=e=>{det.cur=e.target.value;buildItems();renderImport()};
   out.querySelectorAll("[data-i]").forEach(c=>c.onchange=()=>{items[+c.dataset.i].on=c.checked;const n=items.filter(x=>x.on).length;const b=document.getElementById("impGo");b.textContent=`Додати ${n} операцій`;b.disabled=!n});
   out.querySelectorAll("[data-ci]").forEach(s=>s.onchange=()=>{items[+s.dataset.ci].cat=s.value});
+  out.querySelectorAll("[data-ti]").forEach(s=>s.onchange=()=>{const x=items[+s.dataset.ti];x.type=s.value;x.ask=false;x.cat=x.type==="tr"?TR_CAT:x.cat0;renderImport()});
   document.getElementById("impGo").onclick=runImport;
 }
 let importing=false;
@@ -650,7 +660,7 @@ async function runImport(){
   importing=true;
   const btn=document.getElementById("impGo");btn.disabled=true;const pr=document.getElementById("impProg");pr.hidden=false;
   const c=new Date().toISOString();let ok=0;
-  const docs=list.map(x=>({type:x.type,amount:x.amount,cur:x.cur,cat:x.cat,note:x.note,date:x.date,created:c,src:"import",importKey:x.importKey}));
+  const docs=list.map(x=>({type:x.type,dir:x.dir,amount:x.amount,cur:x.cur,cat:x.type==="tr"?TR_CAT:x.cat,prevCat:x.type==="tr"?x.cat0:undefined,note:x.note,date:x.date,created:c,src:"import",importKey:x.importKey})).map(d=>{if(d.prevCat===undefined)delete d.prevCat;return d});
   if(state.mode==="db"){
     for(const d of docs){
       let tries=0;
@@ -665,6 +675,40 @@ async function runImport(){
   toast(ok===docs.length?`Додано ${ok} операцій`:`Додано ${ok} з ${docs.length}. Решту спробуйте ще раз: дублікати пропустяться`);
 }
 
+/* ---------- transfers ---------- */
+const TOPUP_RE=/поповн|переказ|перевод|грошові перекази|з картки|на картку|card2card|p2p|transfer/i;
+const SALARY_RE=/зарплат|заробітн|salary|аванс|премі/i;
+const near=(a,b)=>Math.abs(a-b)<=0.05*Math.max(a,b);
+function findPairs(items){const ins=items.filter(x=>x.type==="inc"),outs=items.filter(x=>x.type==="exp");const used=new Set();const pairs=[];
+  for(const i of ins.sort((a,b)=>a.date.localeCompare(b.date))){if(SALARY_RE.test(i.note||""))continue;let best=null,bs=1e9;
+    for(const o of outs){if(used.has(o)||(o.cur||"UAH")!==(i.cur||"UAH")||dayDiff(i.date,o.date)>2||!near(+i.amount,+o.amount))continue;
+      const sc=Math.abs(i.amount-o.amount)/Math.max(i.amount,1)*10+dayDiff(i.date,o.date)+(o.date<i.date?0.5:0);if(sc<bs){bs=sc;best=o}}
+    if(best){used.add(best);pairs.push([i,best])}}return pairs}
+function cashMatch(x,manualIncs,taken){return manualIncs.find(m=>!taken.has(m)&&(m.cur||"UAH")===(x.cur||"UAH")&&m.date<=x.date&&dayDiff(m.date,x.date)<=7&&near(+m.amount,+x.amount))}
+function classifyImport(items){const live=items.filter(x=>!x.dup);
+  for(const x of live)if(x.skip){x.type="tr";x.cat=TR_CAT;x.reason="переказ між своїми рахунками"}
+  for(const [i,o] of findPairs(live.filter(x=>x.type!=="tr"))){for(const x of [i,o]){x.type="tr";x.cat=TR_CAT}i.reason="поповнення, далі переказ на "+money(o.amount,o.cur);o.reason="переказ після поповнення"}
+  const manual=state.tx.filter(t=>!t.importKey&&!t.example&&t.type==="inc");const taken=new Set();
+  for(const x of live.filter(x=>x.type==="inc")){const m=cashMatch(x,manual,taken);if(m){taken.add(m);x.type="tr";x.cat=TR_CAT;x.manual=false;x.on=!x.dup;x.reason=`схоже, готівка на картку («${(m.note||m.cat).slice(0,20)}» ${m.date.slice(8,10)}.${m.date.slice(5,7)})`}}
+  for(const x of live.filter(x=>x.type==="inc"))if(TOPUP_RE.test(x.note||"")&&!SALARY_RE.test(x.note||"")){x.type="tr";x.cat=TR_CAT;x.ask=true;x.reason="перевірте: дохід чи переказ?"}}
+function transferCandidates(){const base=state.tx.filter(t=>t.type!=="tr"&&!t.example);const out=[];const marked=new Set();
+  for(const [i,o] of findPairs(base)){marked.add(i);marked.add(o);out.push({ids:[i.id,o.id],label:`${i.note||i.cat} → ${o.note||o.cat}`,sub:`+${money(i.amount,i.cur)} і −${money(o.amount,o.cur)}`,on:true})}
+  const manual=base.filter(t=>!t.importKey&&t.type==="inc");const taken=new Set();
+  for(const x of base.filter(t=>t.importKey&&t.type==="inc"&&!marked.has(t))){const m=cashMatch(x,manual,taken);if(m){taken.add(m);marked.add(x);out.push({ids:[x.id],label:x.note||x.cat,sub:`+${money(x.amount,x.cur)} · схоже, готівка «${(m.note||m.cat).slice(0,20)}» на картку`,on:true})}}
+  for(const x of base.filter(t=>t.importKey&&t.type==="inc"&&!marked.has(t)&&TOPUP_RE.test(t.note||"")&&!SALARY_RE.test(t.note||"")))out.push({ids:[x.id],label:x.note||x.cat,sub:`+${money(x.amount,x.cur)} · дохід чи переказ?`,on:false});
+  return out}
+function trPatch(t){return t.type==="tr"?{type:t.dir==="in"?"inc":"exp",cat:t.prevCat||(t.dir==="in"?"Інше (дохід)":"Інше")}:{type:"tr",dir:t.type==="inc"?"in":"out",prevCat:t.cat,cat:TR_CAT}}
+async function patchTx(t,patch){if(state.mode==="db"){try{await txCol.doc(t.id).update(patch)}catch(e){toast("Не вдалося змінити")}}else{Object.assign(t,patch);lsSave()}}
+async function toggleTr(id){const t=state.tx.find(x=>x.id===id);if(!t)return;const was=t.type==="tr";await patchTx(t,trPatch(t));render();toast(was?"Знову рахується":"Позначено як переказ: не рахується")}
+function findTransfersSheet(){const c=transferCandidates();if(!c.length){toast("Переказів не знайдено");return}
+  openSheet("Перекази",`<div class="note">Позначені галочкою операції стануть переказами: вони не рахуватимуться ні в доходах, ні у витратах. Пари «поповнення → переказ» і готівку, покладену на картку, я позначила сама. Поповнення без пари — на Ваш розсуд.</div>
+    <div class="imp-list">${c.map((x,k)=>`<div class="imp-row"><input type="checkbox" id="tf${k}" data-tf="${k}" ${x.on?"checked":""} aria-label="Позначити як переказ">
+      <div style="min-width:0"><label for="tf${k}" style="font-weight:600;overflow-wrap:anywhere">${esc(x.label)}</label><br><small>${esc(x.sub)}</small></div><span></span></div>`).join("")}</div>
+    <button class="btn" id="tfGo">Позначити як перекази</button>`,()=>{
+      document.getElementById("tfGo").onclick=async()=>{let n=0;for(const [k,x] of c.entries()){if(!document.getElementById("tf"+k)?.checked)continue;
+        for(const id of x.ids){const t=state.tx.find(z=>z.id===id);if(t&&t.type!=="tr"){await patchTx(t,trPatch(t));n++}}}
+        closeSheet();render();toast(`Позначено переказами: ${n}`)}})}
+
 /* ---------- swipe to delete ---------- */
 let undoBuf=null,undoTimer=null;
 async function deleteWithUndo(id){const t=state.tx.find(x=>x.id===id);if(!t)return;const copy={...t};
@@ -672,20 +716,24 @@ async function deleteWithUndo(id){const t=state.tx.find(x=>x.id===id);if(!t)retu
   clearTimeout(undoTimer);undoTimer=setTimeout(()=>{u.hidden=true;undoBuf=null},5000)}
 document.getElementById("undoBtn").onclick=async()=>{if(!undoBuf)return;const t=undoBuf;undoBuf=null;document.getElementById("undo").hidden=true;
   if(state.mode==="db"){const {id,...rest}=t;await addTx(rest)}else{state.tx.push(t);lsSave();render()}toast("Повернуто")};
-(function(){const OPEN=96;let sw=null,openEl=null;
+(function(){const OPEN=96,OPENL=120;let sw=null,openEl=null;
   const setX=(el,x)=>{el.querySelector(".item").style.transform=x?`translateX(${x}px)`:""};
   const closeOpen=except=>{if(openEl&&openEl!==except){setX(openEl,0);openEl=null}};
   const view=document.getElementById("view");
-  view.addEventListener("pointerdown",e=>{const el=e.target.closest(".sw");if(e.target.closest(".sw-del"))return;closeOpen(el);
-    if(!el)return;sw={el,x0:e.clientX,y0:e.clientY,base:openEl===el?-OPEN:0,dir:null,id:e.pointerId,x:0}});
+  view.addEventListener("pointerdown",e=>{const el=e.target.closest(".sw");if(e.target.closest(".sw-del,.sw-tr"))return;closeOpen(el);
+    if(!el)return;sw={el,x0:e.clientX,y0:e.clientY,base:openEl===el?(el._open||0):0,dir:null,id:e.pointerId,x:0}});
   view.addEventListener("pointermove",e=>{if(!sw)return;const dx=e.clientX-sw.x0,dy=e.clientY-sw.y0;
     if(!sw.dir){if(Math.abs(dx)>8&&Math.abs(dx)>Math.abs(dy)){sw.dir="h";sw.el.classList.add("drag");try{sw.el.setPointerCapture(sw.id)}catch(err){}}else if(Math.abs(dy)>8){sw=null;return}else return}
-    let x=sw.base+dx;if(x>0)x=x/4;sw.x=x;setX(sw.el,x)});
+    const x=sw.base+dx;sw.x=x;setX(sw.el,x)});
   const end=()=>{if(!sw)return;const s=sw;sw=null;if(s.dir!=="h")return;s.el.classList.remove("drag");const w=s.el.offsetWidth;
     if(s.x<-w*0.55){s.el.querySelector(".item").style.transform=`translateX(${-w}px)`;openEl=null;setTimeout(()=>deleteWithUndo(s.el.dataset.sw),180)}
-    else if(s.x<-48){setX(s.el,-OPEN);openEl=s.el}else{setX(s.el,0);if(openEl===s.el)openEl=null}};
+    else if(s.x>w*0.5){setX(s.el,0);openEl=null;toggleTr(s.el.dataset.sw)}
+    else if(s.x<-48){setX(s.el,-OPEN);s.el._open=-OPEN;openEl=s.el}
+    else if(s.x>48){setX(s.el,OPENL);s.el._open=OPENL;openEl=s.el}
+    else{setX(s.el,0);s.el._open=0;if(openEl===s.el)openEl=null}};
   view.addEventListener("pointerup",end);view.addEventListener("pointercancel",()=>{if(sw){setX(sw.el,sw.base);sw=null}});
-  view.addEventListener("click",e=>{const b=e.target.closest("[data-swdel]");if(b){e.stopPropagation();openEl=null;deleteWithUndo(b.dataset.swdel)}},true);
+  view.addEventListener("click",e=>{const b=e.target.closest("[data-swdel]");if(b){e.stopPropagation();openEl=null;deleteWithUndo(b.dataset.swdel);return}
+    const tb=e.target.closest("[data-swtr]");if(tb){e.stopPropagation();openEl=null;toggleTr(tb.dataset.swtr)}},true);
   document.addEventListener("pointerdown",e=>{if(!e.target.closest(".sw"))closeOpen(null)});
 })();
 
@@ -703,6 +751,7 @@ document.getElementById("view").addEventListener("click",async e=>{
   if(t.dataset.goto){state.tab=t.dataset.goto;render();window.scrollTo(0,0);return}
   if(t.id==="addRec")return openRecForm();
   if(t.id==="dedupe")return dedupe();
+  if(t.id==="findTr")return findTransfersSheet();
   if(t.dataset.del){if(!t.classList.contains("armed")){t.classList.add("armed");t.textContent="Точно видалити?";setTimeout(()=>{t.classList.remove("armed");t.textContent="Видалити"},3000);return}
     await delTx(t.dataset.del);toast("Операцію видалено");return}
   if(t.dataset.delrec){if(!t.classList.contains("armed")){t.classList.add("armed");t.textContent="Точно видалити?";setTimeout(()=>{t.classList.remove("armed");t.textContent="Видалити"},3000);return}
