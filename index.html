@@ -77,6 +77,14 @@ button{font:inherit;color:inherit;cursor:pointer}
 .list{display:grid}
 .item{display:grid;grid-template-columns:10px 1fr auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
 .item:first-child{border-top:0}
+.sw{position:relative;overflow:hidden;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.sw .item{border-top:0;position:relative;background:var(--surface);touch-action:pan-y;transition:transform .25s ease;will-change:transform}
+.sw.drag .item{transition:none}
+.sw+.sw{border-top:1px solid var(--line)}
+.sw-act{position:absolute;inset:1px 0;display:flex;justify-content:flex-end;background:var(--bad);border-radius:12px}
+.sw-del{border:0;background:none;color:#fff;font-weight:700;font-size:14px;min-width:96px;padding:0 16px}
+.undo{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom,0px));z-index:31;background:var(--fg);color:var(--bg);padding:8px 8px 8px 16px;border-radius:14px;font-weight:600;font-size:14px;display:flex;align-items:center;gap:12px;max-width:92vw}
+.undo button{border:0;border-radius:10px;padding:8px 12px;background:var(--accent);color:var(--accent-ink);font-weight:700;font-size:14px}
 .dot{width:10px;height:10px;border-radius:50%}
 .item .t{min-width:0}
 .item .t b{display:block;font-weight:600;overflow-wrap:anywhere}
@@ -171,6 +179,7 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
   </div>
 </div>
 <div class="toast" id="toast" hidden></div>
+<div class="undo" id="undo" role="status" hidden><span id="undoText">Операцію видалено</span><button id="undoBtn">Скасувати</button></div>
 
 <script src="xlsx.full.min.js" defer></script>
 <script>
@@ -338,9 +347,9 @@ function txRow(t){
   const inc=t.type==="inc";const cur=t.cur||"UAH";
   const conv=cur!=="UAH"?`<small>≈ ${uah(toUAH(Number(t.amount),cur))}</small>`:"";
   const [y,m,d]=(t.date||"").split("-");
-  return `<div class="item"><i class="dot" style="background:${catColor(t.cat)}"></i>
-    <div class="t"><b>${esc(t.note||t.cat)}</b><small>${esc(t.cat)} · ${d}.${m}${t.example?" · приклад":""}</small><br><button class="del" data-del="${esc(t.id)}">Видалити</button></div>
-    <div class="amt ${inc?"inc":""}">${inc?"+":"−"}${money(Number(t.amount),cur)}${conv}</div></div>`;
+  return `<div class="sw" data-sw="${esc(t.id)}"><div class="sw-act"><button class="sw-del" data-swdel="${esc(t.id)}" tabindex="-1">Видалити</button></div><div class="item"><i class="dot" style="background:${catColor(t.cat)}"></i>
+    <div class="t"><b>${esc(t.note||t.cat)}</b><small>${esc(t.cat)} · ${d}.${m}${t.example?" · приклад":""}</small></div>
+    <div class="amt ${inc?"inc":""}">${inc?"+":"−"}${money(Number(t.amount),cur)}${conv}</div></div></div>`;
 }
 function emptyBlock(){
   return `<div class="empty"><div>Тут з'являться Ваші доходи й витрати. Натисніть <b>+</b>, щоб додати операцію, або завантажте виписку з банку.</div>
@@ -655,6 +664,30 @@ async function runImport(){
   importing=false;closeSheet();state.month=docs[0].date.slice(0,7);state.tab="ops";render();
   toast(ok===docs.length?`Додано ${ok} операцій`:`Додано ${ok} з ${docs.length}. Решту спробуйте ще раз: дублікати пропустяться`);
 }
+
+/* ---------- swipe to delete ---------- */
+let undoBuf=null,undoTimer=null;
+async function deleteWithUndo(id){const t=state.tx.find(x=>x.id===id);if(!t)return;const copy={...t};
+  await delTx(id);undoBuf=copy;const u=document.getElementById("undo");document.getElementById("undoText").textContent="Видалено: "+(copy.note||copy.cat).slice(0,28);u.hidden=false;
+  clearTimeout(undoTimer);undoTimer=setTimeout(()=>{u.hidden=true;undoBuf=null},5000)}
+document.getElementById("undoBtn").onclick=async()=>{if(!undoBuf)return;const t=undoBuf;undoBuf=null;document.getElementById("undo").hidden=true;
+  if(state.mode==="db"){const {id,...rest}=t;await addTx(rest)}else{state.tx.push(t);lsSave();render()}toast("Повернуто")};
+(function(){const OPEN=96;let sw=null,openEl=null;
+  const setX=(el,x)=>{el.querySelector(".item").style.transform=x?`translateX(${x}px)`:""};
+  const closeOpen=except=>{if(openEl&&openEl!==except){setX(openEl,0);openEl=null}};
+  const view=document.getElementById("view");
+  view.addEventListener("pointerdown",e=>{const el=e.target.closest(".sw");if(e.target.closest(".sw-del"))return;closeOpen(el);
+    if(!el)return;sw={el,x0:e.clientX,y0:e.clientY,base:openEl===el?-OPEN:0,dir:null,id:e.pointerId,x:0}});
+  view.addEventListener("pointermove",e=>{if(!sw)return;const dx=e.clientX-sw.x0,dy=e.clientY-sw.y0;
+    if(!sw.dir){if(Math.abs(dx)>8&&Math.abs(dx)>Math.abs(dy)){sw.dir="h";sw.el.classList.add("drag");try{sw.el.setPointerCapture(sw.id)}catch(err){}}else if(Math.abs(dy)>8){sw=null;return}else return}
+    let x=sw.base+dx;if(x>0)x=x/4;sw.x=x;setX(sw.el,x)});
+  const end=()=>{if(!sw)return;const s=sw;sw=null;if(s.dir!=="h")return;s.el.classList.remove("drag");const w=s.el.offsetWidth;
+    if(s.x<-w*0.55){s.el.querySelector(".item").style.transform=`translateX(${-w}px)`;openEl=null;setTimeout(()=>deleteWithUndo(s.el.dataset.sw),180)}
+    else if(s.x<-48){setX(s.el,-OPEN);openEl=s.el}else{setX(s.el,0);if(openEl===s.el)openEl=null}};
+  view.addEventListener("pointerup",end);view.addEventListener("pointercancel",()=>{if(sw){setX(sw.el,sw.base);sw=null}});
+  view.addEventListener("click",e=>{const b=e.target.closest("[data-swdel]");if(b){e.stopPropagation();openEl=null;deleteWithUndo(b.dataset.swdel)}},true);
+  document.addEventListener("pointerdown",e=>{if(!e.target.closest(".sw"))closeOpen(null)});
+})();
 
 /* ---------- events ---------- */
 document.getElementById("fab").onclick=openTxForm;
