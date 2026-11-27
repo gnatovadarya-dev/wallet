@@ -216,6 +216,28 @@ async function addTx(t){
     try{await txCol.add(t)}catch(e){toast(e&&e.code==="quota_exceeded"?"Сховище заповнене: видаліть старі операції":"Не вдалося зберегти операцію")}
   }else{state.tx.push({...t,id:uid()});lsSave();render()}
 }
+function dupExtras(){const g={};for(const t of state.tx){if(!t.importKey)continue;(g[t.importKey]=g[t.importKey]||[]).push(t)}
+  const extra=[];for(const k in g){const a=g[k];if(a.length<2)continue;a.sort((x,y)=>(x.created||"").localeCompare(y.created||"")||String(x.id).localeCompare(String(y.id)));extra.push(...a.slice(1))}return extra}
+const dayDiff=(a,b)=>Math.abs((new Date(a)-new Date(b))/864e5);
+function sameOp(a,b){return a.type===b.type&&(a.cur||"UAH")===(b.cur||"UAH")&&Math.abs(Number(a.amount)-Number(b.amount))<0.005&&dayDiff(a.date,b.date)<=1}
+function dupPairs(){const extra=new Set(dupExtras().map(t=>t.id));const imps=state.tx.filter(t=>t.importKey&&!extra.has(t.id));const used=new Set();const pairs=[];
+  for(const m of state.tx.filter(t=>!t.importKey&&!t.example)){let best=null;for(const i of imps){if(used.has(i.id)||!sameOp(m,i))continue;if(!best||dayDiff(m.date,i.date)<dayDiff(m.date,best.date))best=i}
+    if(best){used.add(best.id);pairs.push({m,i:best})}}return pairs}
+const dupCount=()=>dupExtras().length+dupPairs().length;
+function dedupe(){const pairs=dupPairs(),ex=dupExtras();if(!pairs.length&&!ex.length)return;
+  const fmtD=d=>d.split("-").reverse().slice(0,2).join(".");
+  openSheet("Дублікати",`<div class="note">Залишаю Ваш ручний запис (з Вашою категорією й коментарем), а копію з виписки прибираю. Наступні імпорти вже знатимуть, що ця операція є. Зніміть галочку, якщо це насправді дві різні покупки.</div>
+    ${pairs.length?`<div class="imp-list">${pairs.map((p,k)=>`<div class="imp-row"><input type="checkbox" id="dp${k}" data-dp="${k}" checked aria-label="Прибрати копію">
+      <div style="min-width:0"><label for="dp${k}" style="font-weight:600;overflow-wrap:anywhere">${esc(p.m.note||p.m.cat)}</label><br><small>вручну ${fmtD(p.m.date)} · з виписки ${fmtD(p.i.date)}: ${esc((p.i.note||"").slice(0,50))}</small></div>
+      <div class="amt">${p.m.type==="inc"?"+":"−"}${money(Number(p.m.amount),p.m.cur||"UAH")}</div></div>`).join("")}</div>`:""}
+    ${ex.length?`<div class="note">Ще ${ex.length} повторів з двох імпортів однієї виписки буде прибрано.</div>`:""}
+    <button class="btn" id="dpGo">Прибрати дублікати</button>`,()=>{
+      document.getElementById("dpGo").onclick=async()=>{const sel=pairs.filter((p,k)=>document.getElementById("dp"+k)?.checked);
+        const delIds=new Set([...sel.map(p=>p.i.id),...ex.map(t=>t.id)]);
+        for(const p of sel)p.m.importKey=p.i.importKey;
+        if(state.mode==="db"){for(const p of sel){try{await txCol.doc(p.m.id).update({importKey:p.i.importKey})}catch(e){}}for(const id of delIds){try{await txCol.doc(id).delete()}catch(e){}}}
+        else{state.tx=state.tx.filter(t=>!delIds.has(t.id));lsSave()}
+        closeSheet();render();toast(`Прибрано дублікатів: ${delIds.size}`)}})}
 async function delTx(id){
   if(state.mode==="db"){try{await txCol.doc(id).delete()}catch(e){toast("Не вдалося видалити")}}
   else{state.tx=state.tx.filter(t=>t.id!==id);lsSave();render()}
@@ -343,7 +365,9 @@ function vOverview(){
 }
 function vOps(){
   const list=monthTx(state.month).sort((a,b)=>(b.date+(b.created||"")).localeCompare(a.date+(a.created||"")));
-  const imp=`<div class="card imp-card"><div class="top"><div><h2>Виписка з банку</h2><small style="color:var(--muted)">PDF, Excel або CSV з будь-якого банку</small></div><button class="btn sm" data-import="1">Імпорт</button></div></div>`;
+  const dn=dupCount();
+  const imp=`<div class="card imp-card"><div class="top"><div><h2>Виписка з банку</h2><small style="color:var(--muted)">PDF, Excel або CSV з будь-якого банку</small></div><button class="btn sm" data-import="1">Імпорт</button></div>
+    ${dn?`<div class="top" style="border-top:1px solid var(--line);padding-top:12px"><small style="color:var(--muted)">Схоже на дублі: ${dn}</small><button class="btn sm ghost" id="dedupe">Прибрати дублікати</button></div>`:""}</div>`;
   if(!list.length)return imp+`<div class="card">${emptyBlock()}</div>`;
   return imp+vOpsList(list);
 }
@@ -550,8 +574,9 @@ function buildItems(){
     if(!date||!isFinite(a)||a===0)continue;
     const desc=m.desc>=0?String(r[m.desc]).trim():"";const bankCat=m.cat>=0?String(r[m.cat]):"";const mcc=m.mcc>=0?r[m.mcc]:"";
     const isInc=a>0;const key=[date,a.toFixed(2),det.cur,desc.slice(0,40)].join("|");
-    const dup=keys.has(key);
-    out.push({date,amount:Math.abs(a),type:isInc?"inc":"exp",cur:det.cur,note:desc.slice(0,80),cat:guessCat(desc,bankCat,mcc,isInc),importKey:key,dup,on:!dup&&!SKIP_RE.test(desc+" "+bankCat)});
+    const dup=keys.has(key);const cand={type:isInc?"inc":"exp",cur:det.cur,amount:Math.abs(a),date};
+    const manual=!dup&&state.tx.some(t=>!t.importKey&&!t.example&&sameOp(t,cand));
+    out.push({manual,date,amount:Math.abs(a),type:isInc?"inc":"exp",cur:det.cur,note:desc.slice(0,80),cat:guessCat(desc,bankCat,mcc,isInc),importKey:key,dup,on:!dup&&!manual&&!SKIP_RE.test(desc+" "+bankCat)});
   }
   imp.items=out.sort((a,b)=>b.date.localeCompare(a.date));
 }
@@ -597,7 +622,7 @@ function renderImport(){
     <div class="note">Знайдено ${items.length} операцій${dups?`, з них ${dups} вже є в гаманці`:""}. Перекази між своїми рахунками я зняла з позначки, щоб вони не рахувалися як витрати. Перевірте категорії.</div>
     <div class="imp-list">${items.map((x,i)=>`<div class="imp-row ${x.dup?"dup":""}">
       <input type="checkbox" id="ic${i}" data-i="${i}" ${x.on?"checked":""} ${x.dup?"disabled":""} aria-label="Імпортувати">
-      <div style="min-width:0"><label for="ic${i}" style="font-weight:600;overflow-wrap:anywhere">${esc(x.note||"Без опису")}</label><br><small>${x.date.split("-").reverse().join(".")}${x.dup?" · вже є":""}</small><br>
+      <div style="min-width:0"><label for="ic${i}" style="font-weight:600;overflow-wrap:anywhere">${esc(x.note||"Без опису")}</label><br><small>${x.date.split("-").reverse().join(".")}${x.dup?" · вже є":x.manual?" · схоже, вже внесено вручну":""}</small><br>
       <select id="icat${i}" data-ci="${i}" aria-label="Категорія">${catOptions(x.type,x.cat)}</select></div>
       <div class="amt ${x.type==="inc"?"inc":""}">${x.type==="inc"?"+":"−"}${money(x.amount,x.cur)}</div></div>`).join("")||`<div class="empty">Нових операцій немає.</div>`}</div>
     <div class="prog" id="impProg" hidden><i></i></div>
@@ -608,8 +633,12 @@ function renderImport(){
   out.querySelectorAll("[data-ci]").forEach(s=>s.onchange=()=>{items[+s.dataset.ci].cat=s.value});
   document.getElementById("impGo").onclick=runImport;
 }
+let importing=false;
 async function runImport(){
-  const list=imp.items.filter(x=>x.on&&!x.dup);if(!list.length)return;
+  if(importing)return;
+  const have=new Set(state.tx.map(t=>t.importKey).filter(Boolean));
+  const list=imp.items.filter(x=>x.on&&!x.dup&&!have.has(x.importKey));if(!list.length){toast("Ці операції вже є в гаманці");return}
+  importing=true;
   const btn=document.getElementById("impGo");btn.disabled=true;const pr=document.getElementById("impProg");pr.hidden=false;
   const c=new Date().toISOString();let ok=0;
   const docs=list.map(x=>({type:x.type,amount:x.amount,cur:x.cur,cat:x.cat,note:x.note,date:x.date,created:c,src:"import",importKey:x.importKey}));
@@ -623,7 +652,7 @@ async function runImport(){
       pr.firstElementChild.style.width=(ok/docs.length*100)+"%";btn.textContent=`Додаю… ${ok} з ${docs.length}`;
     }
   }else{for(const d of docs)state.tx.push({...d,id:uid()});ok=docs.length;lsSave()}
-  closeSheet();state.month=docs[0].date.slice(0,7);state.tab="ops";render();
+  importing=false;closeSheet();state.month=docs[0].date.slice(0,7);state.tab="ops";render();
   toast(ok===docs.length?`Додано ${ok} операцій`:`Додано ${ok} з ${docs.length}. Решту спробуйте ще раз: дублікати пропустяться`);
 }
 
@@ -640,6 +669,7 @@ document.getElementById("view").addEventListener("click",async e=>{
   if(t.id==="bkSave")return exportBackup();
   if(t.dataset.goto){state.tab=t.dataset.goto;render();window.scrollTo(0,0);return}
   if(t.id==="addRec")return openRecForm();
+  if(t.id==="dedupe")return dedupe();
   if(t.dataset.del){if(!t.classList.contains("armed")){t.classList.add("armed");t.textContent="Точно видалити?";setTimeout(()=>{t.classList.remove("armed");t.textContent="Видалити"},3000);return}
     await delTx(t.dataset.del);toast("Операцію видалено");return}
   if(t.dataset.delrec){if(!t.classList.contains("armed")){t.classList.add("armed");t.textContent="Точно видалити?";setTimeout(()=>{t.classList.remove("armed");t.textContent="Видалити"},3000);return}
