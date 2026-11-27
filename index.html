@@ -343,7 +343,7 @@ function vOverview(){
 }
 function vOps(){
   const list=monthTx(state.month).sort((a,b)=>(b.date+(b.created||"")).localeCompare(a.date+(a.created||"")));
-  const imp=`<div class="card imp-card"><div class="top"><div><h2>Виписка з банку</h2><small style="color:var(--muted)">Excel або CSV з Monobank, Приват24 чи іншого банку</small></div><button class="btn sm" data-import="1">Імпорт</button></div></div>`;
+  const imp=`<div class="card imp-card"><div class="top"><div><h2>Виписка з банку</h2><small style="color:var(--muted)">PDF, Excel або CSV з будь-якого банку</small></div><button class="btn sm" data-import="1">Імпорт</button></div></div>`;
   if(!list.length)return imp+`<div class="card">${emptyBlock()}</div>`;
   return imp+vOpsList(list);
 }
@@ -462,7 +462,7 @@ function parseNum(v){
   if(typeof v==="number")return v;
   let s=String(v??"").replace(/[\s  ]/g,"").replace(/[−–—]/g,"-");
   if(!s)return NaN;
-  if(s.includes(",")&&s.includes("."))s=s.replace(/,/g,""); else s=s.replace(",",".");
+  if(s.includes(",")&&s.includes(".")){if(s.lastIndexOf(",")>s.lastIndexOf("."))s=s.replace(/\./g,"").replace(",",".");else s=s.replace(/,/g,"")}else s=s.replace(",",".");
   s=s.replace(/[^0-9.\-]/g,"");return parseFloat(s);
 }
 function parseDate(v){
@@ -477,6 +477,7 @@ function findCol(h,res,not){for(const re of res){const i=h.findIndex(x=>re.test(
 function detect(rows){
   let hi=-1;
   for(let i=0;i<Math.min(rows.length,40);i++){const r=rows[i].map(c=>String(c).toLowerCase());if(r.some(c=>/дата|date/.test(c))&&r.some(c=>/сум|amount/.test(c))){hi=i;break}}
+  if(hi<0)for(let i=0;i<Math.min(rows.length,40);i++){const r=rows[i].map(c=>String(c).toLowerCase());if(r.some(c=>/дата|date/.test(c))&&r.some(c=>/дебет|кредит|списан|зарахув|надходж|debit|credit/.test(c))){hi=i;break}}
   if(hi<0)return null;
   const h=rows[hi].map(c=>String(c).toLowerCase().trim());
   const not=/коміс|кешбек|cashback|залишок|balance|курс|rate|fee/;
@@ -486,15 +487,49 @@ function detect(rows){
     amount:findCol(h,[/сума.*валют.*карт/,/сума.*карт/,/сума.*рахун/,/^сума$/,/сума/,/amount/],not),
     cat:findCol(h,[/категор/,/category/]),
     mcc:findCol(h,[/^mcc/,/mcc/]),
+    debit:findCol(h,[/дебет/,/списан/,/витрат/,/debit/],/залишок|balance/),
+    credit:findCol(h,[/кредит/,/зарахув/,/надходж/,/credit/],/залишок|balance|ліміт/),
   };
+  if(map.debit>=0&&map.credit>=0&&(map.amount===map.debit||map.amount===map.credit))map.amount=-1;
   let cur="UAH";const ah=h[map.amount]||"";
   const cm=ah.match(/\((uah|eur|usd)\)/i)||ah.match(/\b(uah|eur|usd|грн)\b/i);
   if(cm)cur=cm[1].toUpperCase()==="ГРН"?"UAH":cm[1].toUpperCase();
   else{const ci=findCol(h,[/валюта.*карт/,/валюта.*рахун/]);if(ci>=0){const v=String(rows[hi+1]?.[ci]||"").toUpperCase();if(CURS.includes(v))cur=v;else if(/ГРН|980/.test(v))cur="UAH"}}
   return {hi,header:rows[hi].map(String),map,cur};
 }
+function loadScript(src){return new Promise((res,rej)=>{const s=document.createElement("script");s.src=src;s.onload=res;s.onerror=()=>rej(new Error("load"));document.head.appendChild(s)})}
+async function pdfRows(buf){
+  if(!window.pdfjsLib){await loadScript("pdf.min.js");pdfjsLib.GlobalWorkerOptions.workerSrc="pdf.worker.min.js"}
+  const pdf=await pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise;
+  const lines=[];let textLen=0;
+  for(let pn=1;pn<=pdf.numPages;pn++){const page=await pdf.getPage(pn);const tc=await page.getTextContent();
+    const its=tc.items.filter(t=>t.str&&t.str.trim()).map(t=>({x:t.transform[4],y:t.transform[5],w:t.width||t.str.length*4,s:t.str,h:Math.abs(t.transform[3])||8}));
+    textLen+=its.length;its.sort((a,b)=>b.y-a.y||a.x-b.x);
+    const rows=[];for(const it of its){const r=rows.find(r=>Math.abs(r.y-it.y)<=Math.max(2,it.h*0.35));if(r)r.items.push(it);else rows.push({y:it.y,items:[it],page:pn})}
+    for(const r of rows){r.items.sort((a,b)=>a.x-b.x);const cells=[];for(const it of r.items){const last=cells[cells.length-1];const gap=last?it.x-last.x1:99;
+        if(last&&gap<Math.max(3,it.h*0.6))(last.t+=(gap>1?" ":"")+it.s,last.x1=Math.max(last.x1,it.x+it.w));else cells.push({x0:it.x,x1:it.x+it.w,t:it.s})}
+      lines.push({cells,page:r.page})}}
+  if(!textLen)throw new Error("scan");
+  const low=c=>c.t.toLowerCase();
+  const hi=lines.findIndex(l=>l.cells.some(c=>/дата|date/.test(low(c)))&&l.cells.some(c=>/сум|amount|дебет|кредит|списан|зарахув|debit|credit/.test(low(c))));
+  if(hi<0)throw new Error("nohead");
+  let head=lines[hi].cells.map(c=>({...c}));
+  // header may span 2 lines: merge next line cells that sit under header columns
+  const nxt=lines[hi+1];let start=hi+1;
+  if(nxt&&!nxt.cells.some(c=>/\d{1,2}[./]\d{1,2}[./]\d{2,4}/.test(c.t))&&nxt.cells.length<=head.length+2){for(const c of nxt.cells){const k=nearest(head,c);if(k>=0)head[k].t+=" "+c.t}start=hi+2}
+  function nearest(cols,c){const cx=(c.x0+c.x1)/2;let best=-1,bd=1e9;cols.forEach((h,i)=>{const ov=Math.min(h.x1,c.x1)-Math.max(h.x0,c.x0);const d=ov>0?-ov:Math.min(Math.abs(cx-(h.x0+h.x1)/2),Math.abs(cx-h.x0),Math.abs(cx-h.x1));if(d<bd){bd=d;best=i}});return best}
+  const headTxt=head.map(c=>c.t.toLowerCase().replace(/\s+/g," ").trim());
+  const dateCol=headTxt.findIndex(t=>/дата|date/.test(t));
+  const out=[head.map(c=>c.t.replace(/\s+/g," ").trim())];let cur=null;
+  for(let i=start;i<lines.length;i++){const l=lines[i];const lt=l.cells.map(low).join(" ");
+    if(l.cells.length>=2&&headTxt.filter(h=>h&&lt.includes(h.split(" ")[0])).length>=Math.min(3,head.length))continue; // repeated header
+    const row=Array(head.length).fill("");for(const c of l.cells){const k=nearest(head,c);row[k]=(row[k]?row[k]+" ":"")+c.t}
+    if(parseDate(row[dateCol]||"")){cur=row;out.push(row)}
+    else if(cur){row.forEach((v,k)=>{if(v)cur[k]=(cur[k]?cur[k]+" ":"")+v})}}
+  return out}
 async function readFile(file){
   const buf=await file.arrayBuffer();
+  if(/\.pdf$/i.test(file.name)||file.type==="application/pdf")return {pdf:await pdfRows(buf)};
   if(/\.csv$|\.txt$/i.test(file.name)||file.type==="text/csv"){
     let text=new TextDecoder("utf-8").decode(buf);
     if((text.match(/\uFFFD/g)||[]).length>3){try{text=new TextDecoder("windows-1251").decode(buf)}catch(e){}}
@@ -508,7 +543,10 @@ function buildItems(){
   const {rows,det}=imp;const m=det.map;const keys=new Set(state.tx.map(t=>t.importKey).filter(Boolean));
   const out=[];
   for(let i=det.hi+1;i<rows.length;i++){
-    const r=rows[i];const date=parseDate(r[m.date]);const a=parseNum(r[m.amount]);
+    const r=rows[i];const date=parseDate(r[m.date]);
+    let a=m.amount>=0?parseNum(r[m.amount]):NaN;
+    if(!isFinite(a)&&(m.debit>=0||m.credit>=0)){const db=m.debit>=0?parseNum(r[m.debit]):NaN,cr=m.credit>=0?parseNum(r[m.credit]):NaN;
+      if(isFinite(cr)&&cr!==0)a=Math.abs(cr);else if(isFinite(db)&&db!==0)a=-Math.abs(db)}
     if(!date||!isFinite(a)||a===0)continue;
     const desc=m.desc>=0?String(r[m.desc]).trim():"";const bankCat=m.cat>=0?String(r[m.cat]):"";const mcc=m.mcc>=0?r[m.mcc]:"";
     const isInc=a>0;const key=[date,a.toFixed(2),det.cur,desc.slice(0,40)].join("|");
@@ -521,23 +559,25 @@ function impHelp(){return `<div class="note" style="display:grid;gap:8px">
   <b style="color:var(--fg)">Як отримати файл на iPhone</b>
   <ol class="steps"><li><b>Monobank:</b> картка → значок виписки → вибрати період → формат Excel або CSV → «Зберегти у Файли».</li>
   <li><b>Приват24:</b> картка → «Виписка» → період → завантажити Excel → «Зберегти у Файли».</li>
+  <li><b>Інші банки (зокрема Райффайзен):</b> підійде і PDF-виписка, якщо це текстовий файл з банку, а не скан.</li>
   <li>Тут натисніть «Вибрати файл» і знайдіть його в «Файлах».</li></ol>
   <span>Назви пунктів у застосунках банків можуть трохи відрізнятися після оновлень. Файл обробляється на Вашому телефоні: у гаманець потрапляють лише дата, сума, опис і категорія, номер картки не зберігається.</span></div>`}
 function openImport(){
   if(!window.XLSX){toast("Модуль імпорту ще завантажується, спробуйте за кілька секунд");return}
   openSheet("Імпорт виписки",`<div style="display:grid;gap:12px">${impHelp()}
     <label class="btn" for="impFile" style="text-align:center">Вибрати файл</label>
-    <input id="impFile" type="file" accept=".csv,.xls,.xlsx,.txt,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
+    <input id="impFile" type="file" accept=".pdf,application/pdf,.csv,.xls,.xlsx,.txt,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>
     <div id="impOut"></div></div>`,()=>{
       document.getElementById("impFile").onchange=async e=>{
         const f=e.target.files[0];if(!f)return;const out=document.getElementById("impOut");
         out.innerHTML=`<div class="note">Читаю «${esc(f.name)}»…</div>`;
         try{
           const wb=await readFile(f);let found=null,rows=null;
-          for(const n of wb.SheetNames){const r=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:""});const d=detect(r);if(d){found=d;rows=r;break}}
-          if(!found){out.innerHTML=`<div class="note" style="color:var(--bad)">Не знайшла в файлі колонок «Дата» і «Сума». Перевірте, що це виписка операцій, а не PDF-довідка, і спробуйте формат Excel або CSV.</div>`;return}
+          if(wb.pdf){rows=wb.pdf;found=detect(rows)}
+          else for(const n of wb.SheetNames){const r=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,raw:true,defval:""});const d=detect(r);if(d){found=d;rows=r;break}}
+          if(!found){out.innerHTML=`<div class="note" style="color:var(--bad)">Не знайшла в файлі колонок «Дата» і «Сума». Перевірте, що це виписка операцій. Якщо це PDF, спробуйте завантажити з банку Excel або CSV.</div>`;return}
           imp.rows=rows;imp.det=found;buildItems();renderImport();
-        }catch(err){out.innerHTML=`<div class="note" style="color:var(--bad)">Файл не вдалося прочитати. Підходять формати .xlsx, .xls і .csv.</div>`}
+        }catch(err){out.innerHTML=`<div class="note" style="color:var(--bad)">${err&&err.message==="scan"?"У цьому PDF немає тексту: схоже, це скан або фото. Такий файл прочитати не вийде, завантажте з банку звичайну виписку.":err&&err.message==="nohead"?"У PDF не знайшла таблиці з колонками «Дата» і «Сума». Надішліть файл Claude, щоб налаштувати розпізнавання саме Вашого банку.":err&&err.message==="load"?"Модуль читання PDF не завантажився. Перевірте інтернет і спробуйте ще раз.":"Файл не вдалося прочитати. Підходять формати .pdf, .xlsx, .xls і .csv."}</div>`}
       };
     });
 }
