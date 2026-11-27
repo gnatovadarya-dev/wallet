@@ -79,6 +79,10 @@ button{font:inherit;color:inherit;cursor:pointer}
 .item:first-child{border-top:0}
 .acc{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
 .split .sp{display:grid;grid-template-columns:1fr auto auto;gap:14px;padding:8px 0;border-top:1px solid var(--line);align-items:center}.split .sp:first-child{border-top:0}.split .sp>*:not(:first-child){text-align:right;min-width:80px}.split .sp.h{font-size:13px;color:var(--muted);padding-top:0}.split .sp .inc,.split .inc{color:var(--good,#2e7d4f)}.split .sp.tot{font-weight:700}.card .split .sp:not(.h):has(>:nth-child(2):last-child){grid-template-columns:1fr auto}
+.newcat{display:grid;grid-template-columns:1fr auto auto;gap:6px;margin-top:6px}.newcat input{font-size:16px}
+.catrow{display:grid;grid-template-columns:12px 1fr auto;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--line)}.catrow:first-child{border-top:0}.catrow.off b{color:var(--muted);text-decoration:line-through}
+.catrow .acts{display:flex;gap:4px}.catrow .acts button{border:0;background:var(--sunk);color:var(--fg);border-radius:9px;padding:6px 9px;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+.catedit{display:grid;gap:8px;padding:10px 0 4px;grid-column:1/-1}
 .acc:first-child{border-top:0}.acc.tot{font-weight:700}.acc .del{color:var(--accent);font-weight:700}
 .chips button[data-accf]{border:0;cursor:pointer;background:var(--sunk);color:var(--fg);padding:8px 14px}
 .chips button[data-accf][aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
@@ -218,7 +222,51 @@ function uah(n){return nf.format(Math.round(n))+" ₴"}
 function money(a,c){return nf2.format(a)+" "+SYM[c]}
 function toUAH(a,c){return c==="UAH"?a:a*(Number(state.settings.rates[c])||0)}
 function esc(s){return String(s??"").replace(/[&<>"']/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]))}
-function catColor(cat){if(cat===TR_CAT)return "var(--muted)";const all=[...EXP_CATS,...INC_CATS];const i=Math.max(0,all.indexOf(cat));return `var(--c${(i%8)+1})`}
+const LOCKED_CATS=["Перекази людям","Комісії банку","Інше"];
+function catCfg(){const st=state.settings;if(!st.cats||!Array.isArray(st.cats.list))st.cats={list:[...EXP_CATS],hidden:[],alias:{}};st.cats.hidden=st.cats.hidden||[];st.cats.alias=st.cats.alias||{};return st.cats}
+function ALLCATS(){return catCfg().list}
+function ECATS(){const c=catCfg();return c.list.filter(x=>!c.hidden.includes(x))}
+function mapCat(x){const a=catCfg().alias;let i=0;while(a[x]&&i++<20)x=a[x];return x}
+function catExists(n){return ALLCATS().some(c=>c.toLowerCase()===n.toLowerCase())}
+function cleanCatName(n){return String(n||"").replace(/\s+/g," ").trim().slice(0,30)}
+function addCat(n){n=cleanCatName(n);if(!n)return null;const ex=ALLCATS().find(c=>c.toLowerCase()===n.toLowerCase());const c=catCfg();
+  if(ex){c.hidden=c.hidden.filter(h=>h!==ex);saveSettings();return ex}
+  c.list.splice(Math.max(0,c.list.indexOf("Інше")),0,n);delete c.alias[n];saveSettings();return n}
+function moveCat(from,to){for(const t of state.tx){if(t.cat===from)t.cat=to;if(t.prevCat===from)t.prevCat=to}
+  const st=state.settings;for(const r of st.recurring||[])if(r.cat===from)r.cat=to;
+  const b=st.budgets||{};if(b[from]!=null){if(b[to]==null)b[to]=b[from];delete b[from]}
+  const c=catCfg();for(const k in c.alias)if(c.alias[k]===from)c.alias[k]=to;c.alias[from]=to;lsSave()}
+function renameCat(old,n){n=cleanCatName(n);if(!n||n===old)return "";if(catExists(n)&&n.toLowerCase()!==old.toLowerCase())return "Така категорія вже є";
+  const c=catCfg();c.list[c.list.indexOf(old)]=n;c.hidden=c.hidden.map(h=>h===old?n:h);delete c.alias[n];moveCat(old,n);saveSettings();return ""}
+function deleteCat(old,to){const c=catCfg();c.list=c.list.filter(x=>x!==old);c.hidden=c.hidden.filter(x=>x!==old);moveCat(old,to);saveSettings()}
+function catsSheet(){
+  const body=()=>{const c=catCfg();const cnt={};for(const t of state.tx)if(t.type==="exp")cnt[t.cat]=(cnt[t.cat]||0)+1;
+    return `<div class="note">Перейменування й видалення змінюють і старі операції, ліміти та регулярні платежі. «Сховати» прибирає категорію з вибору, але старі операції її зберігають.</div>
+    <div class="grid2" style="margin:6px 0 4px"><input id="cNew" maxlength="30" placeholder="Нова категорія" aria-label="Нова категорія"><button class="btn sm" id="cAdd">Додати</button></div>
+    <div id="cList">${c.list.map((x,i)=>{const lock=LOCKED_CATS.includes(x),off=c.hidden.includes(x);
+      return `<div class="catrow ${off?"off":""}"><i class="dot" style="background:${catColor(x)}"></i><span><b>${esc(x)}</b><br><small style="color:var(--muted)">операцій: ${cnt[x]||0}${lock?" · системна":""}${off?" · схована":""}</small></span>
+      ${lock?"<span></span>":`<span class="acts"><button data-cren="${i}">Змінити</button><button data-chide="${i}">${off?"Показати":"Сховати"}</button><button data-cdel="${i}">Видалити</button></span>`}
+      <div class="catedit" id="ce${i}" hidden></div></div>`}).join("")}</div>`};
+  const wire=()=>{const root=document.getElementById("catsRoot");const redraw=()=>{root.innerHTML=body();wire();render()};
+    const add=()=>{const v=cleanCatName(document.getElementById("cNew").value);if(!v)return;if(catExists(v)&&!catCfg().hidden.some(h=>h.toLowerCase()===v.toLowerCase())){toast("Така категорія вже є");return}addCat(v);redraw();toast("Категорію «"+v+"» додано")};
+    document.getElementById("cAdd").onclick=add;document.getElementById("cNew").onkeydown=e=>{if(e.key==="Enter")add()};
+    root.querySelectorAll("[data-chide]").forEach(b=>b.onclick=()=>{const c=catCfg(),x=c.list[+b.dataset.chide];c.hidden=c.hidden.includes(x)?c.hidden.filter(h=>h!==x):[...c.hidden,x];saveSettings();redraw()});
+    root.querySelectorAll("[data-cren]").forEach(b=>b.onclick=()=>{const i=+b.dataset.cren,x=catCfg().list[i],box=document.getElementById("ce"+i);
+      box.hidden=false;box.innerHTML=`<input value="${esc(x)}" maxlength="30" aria-label="Нова назва"><div class="grid2"><button class="btn sm">Зберегти</button><button class="btn sm ghost">Скасувати</button></div>`;
+      const inp=box.querySelector("input");inp.focus();inp.select();const [ok,no]=box.querySelectorAll("button");no.onclick=()=>{box.hidden=true};
+      ok.onclick=()=>{const err=renameCat(x,inp.value);if(err){toast(err);return}redraw();toast("Перейменовано")}});
+    root.querySelectorAll("[data-cdel]").forEach(b=>b.onclick=()=>{const i=+b.dataset.cdel,x=catCfg().list[i],box=document.getElementById("ce"+i);
+      const n=state.tx.filter(t=>t.cat===x).length;box.hidden=false;
+      box.innerHTML=`<label class="f">${n?`Операції (${n}) перенести в`:"Видалити категорію? Якщо вона з'явиться в нових операціях, піде в"}<select>${ALLCATS().filter(c=>c!==x).map(c=>`<option ${c==="Інше"?"selected":""}>${esc(c)}</option>`).join("")}</select></label><div class="grid2"><button class="btn sm">Видалити</button><button class="btn sm ghost">Скасувати</button></div>`;
+      const [ok,no]=box.querySelectorAll("button");no.onclick=()=>{box.hidden=true};ok.onclick=()=>{const to=box.querySelector("select").value;deleteCat(x,to);redraw();toast("Категорію «"+x+"» видалено")}})};
+  openSheet("Категорії витрат",`<div id="catsRoot">${body()}</div>`,wire)}
+function bindNewCat(sel){if(!sel||sel._nc)return;sel._nc=1;let prev=sel.value==="__new"?"Інше":sel.value;
+  sel.addEventListener("change",()=>{if(sel.value!=="__new"){prev=sel.value;return}
+    const box=document.createElement("div");box.className="newcat";box.innerHTML=`<input maxlength="30" placeholder="Назва нової категорії" aria-label="Назва нової категорії"><button type="button" class="btn sm">Додати</button><button type="button" class="btn sm ghost">Скасувати</button>`;
+    sel.value=prev;sel.insertAdjacentElement("afterend",box);const inp=box.querySelector("input");inp.focus();
+    const done=()=>{const n=addCat(inp.value);if(!n){inp.focus();return}document.querySelectorAll("select[data-catsel]").forEach(s=>{const v=s===sel?n:s.value;s.innerHTML=catOptions("exp",v)});sel.value=n;prev=n;sel.dispatchEvent(new Event("change"));box.remove();toast("Категорію «"+n+"» додано")};
+    box.querySelectorAll("button")[0].onclick=done;inp.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();done()}});box.querySelectorAll("button")[1].onclick=()=>box.remove()})}
+function catColor(cat){if(cat===TR_CAT)return "var(--muted)";const all=[...ALLCATS(),...INC_CATS];const i=Math.max(0,all.indexOf(cat));return `var(--c${(i%8)+1})`}
 function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.hidden=false;clearTimeout(toast._t);toast._t=setTimeout(()=>t.hidden=true,2200)}
 function uid(){return Math.random().toString(36).slice(2,10)}
 
@@ -461,12 +509,13 @@ function vOpsList(list){
 }
 function vBudget(){
   const {byCat}=sums(state.month);const b=state.settings.budgets||{};
-  const rows=EXP_CATS.map(cat=>{const lim=Number(b[cat])||0;const spent=byCat[cat]||0;const p=lim?spent/lim:0;const lv=p>=1?"bad":p>=.8?"warn":"";
+  const hid=catCfg().hidden;const bl=[...ECATS(),...hid.filter(c=>byCat[c])];
+  const rows=bl.map((cat,ci)=>{const lim=Number(b[cat])||0;const spent=byCat[cat]||0;const p=lim?spent/lim:0;const lv=p>=1?"bad":p>=.8?"warn":"";
     return `<div class="bud"><div class="h"><b><i class="dot" style="display:inline-block;background:${catColor(cat)}"></i> ${esc(cat)}</b><span>${uah(spent)}${lim?" з "+uah(lim):""}</span></div>
       ${lim?`<div class="bar"><i class="${lv}" style="width:${Math.min(100,p*100)}%"></i></div>`:""}
-      <label class="lim" for="lim-${EXP_CATS.indexOf(cat)}">Ліміт на місяць, ₴ <input id="lim-${EXP_CATS.indexOf(cat)}" type="number" inputmode="decimal" min="0" step="100" data-lim="${esc(cat)}" value="${lim||""}" placeholder="без ліміту"></label></div>`}).join("");
+      <label class="lim" for="lim-${ci}">Ліміт на місяць, ₴ <input id="lim-${ci}" type="number" inputmode="decimal" min="0" step="100" data-lim="${esc(cat)}" value="${lim||""}" placeholder="без ліміту"></label></div>`}).join("");
   const r=state.settings.rates;
-  return `<div class="card"><h2>Ліміти на ${monthLabel(state.month)}</h2><div class="note">Жовта позначка з'являється на 80% ліміту, червона на 100%. Попередження видно на вкладці «Огляд».</div><div>${rows}</div></div>
+  return `<div class="card"><div class="top"><h2>Ліміти на ${monthLabel(state.month)}</h2><button class="btn sm ghost" id="catsBtn">Категорії</button></div><div class="note">Жовта позначка з'являється на 80% ліміту, червона на 100%. Попередження видно на вкладці «Огляд».</div><div>${rows}</div></div>
   <div class="card"><h2>Резервна копія</h2>
     <div class="note">Записи зберігаються лише на цьому телефоні. Раз на тиждень-два зберігайте копію у «Файли» або iCloud: якщо телефон загубиться чи гаманець видалиться, з копії все відновиться.</div>
     <div style="font-size:14px">Остання копія: <b>${state.settings.lastBackup?new Date(state.settings.lastBackup).toLocaleDateString("uk-UA"):"ще не робили"}</b></div>
@@ -506,7 +555,9 @@ document.getElementById("sheetClose").onclick=closeSheet;
 sheet.addEventListener("click",e=>{if(e.target===sheet)closeSheet()});
 document.addEventListener("keydown",e=>{if(e.key==="Escape"&&!sheet.hidden)closeSheet()});
 
-function catOptions(type,sel){return (type==="inc"?INC_CATS:EXP_CATS).map(c=>`<option ${c===sel?"selected":""}>${esc(c)}</option>`).join("")}
+function catOptions(type,sel){if(type==="inc")return INC_CATS.map(c=>`<option ${c===sel?"selected":""}>${esc(c)}</option>`).join("");
+  const l=ECATS();if(sel&&!l.includes(sel)&&sel!==TR_CAT)l.push(sel);
+  return l.map(c=>`<option ${c===sel?"selected":""}>${esc(c)}</option>`).join("")+`<option value="__new">＋ Нова категорія…</option>`}
 function curOptions(sel){return CURS.map(c=>`<option value="${c}" ${c===sel?"selected":""}>${c} ${SYM[c]}</option>`).join("")}
 
 function openTxForm(){
@@ -515,16 +566,17 @@ function openTxForm(){
     <div class="seg" role="group" aria-label="Тип"><button type="button" data-type="exp" aria-pressed="true">Витрата</button><button type="button" data-type="inc" aria-pressed="false">Дохід</button></div>
     <div class="grid3"><label class="f" for="fAmt">Сума<input id="fAmt" type="number" inputmode="decimal" step="0.01" min="0.01" required placeholder="0"></label>
     <label class="f" for="fCur">Валюта<select id="fCur">${curOptions("UAH")}</select></label></div>
-    <div class="grid2"><label class="f" for="fCat">Категорія<select id="fCat">${catOptions("exp")}</select></label><label class="f" for="fAcc">Рахунок<select id="fAcc">${accOptions(state.settings.lastAcc||"cash")}</select></label></div>
+    <div class="grid2"><label class="f" for="fCat">Категорія<select id="fCat" data-catsel="1">${catOptions("exp")}</select></label><label class="f" for="fAcc">Рахунок<select id="fAcc">${accOptions(state.settings.lastAcc||"cash")}</select></label></div>
     <label class="f" for="fNote">Коментар<input id="fNote" maxlength="80" placeholder="Наприклад: Сільпо, таксі до роботи"></label>
     <label class="f" for="fDate">Дата<input id="fDate" type="date" value="${state.month===ym(new Date())?today():state.month+"-01"}" required></label>
     <button class="btn" type="submit">Зберегти</button></form>`,()=>{
       const f=document.getElementById("txForm");
-      f.querySelectorAll("[data-type]").forEach(b=>b.onclick=()=>{type=b.dataset.type;f.querySelectorAll("[data-type]").forEach(x=>x.setAttribute("aria-pressed",x===b));document.getElementById("fCat").innerHTML=catOptions(type)});
+      f.querySelectorAll("[data-type]").forEach(b=>b.onclick=()=>{type=b.dataset.type;f.querySelectorAll("[data-type]").forEach(x=>x.setAttribute("aria-pressed",x===b));const fc=document.getElementById("fCat");fc.innerHTML=catOptions(type);f.querySelector(".newcat")?.remove()});
+      bindNewCat(document.getElementById("fCat"));
       setTimeout(()=>document.getElementById("fAmt").focus(),50);
       f.onsubmit=async e=>{e.preventDefault();const amount=parseFloat(document.getElementById("fAmt").value);if(!(amount>0))return;
         const acc=document.getElementById("fAcc").value;state.settings.lastAcc=acc;saveSettings();
-        const t={type,amount,acc,cur:document.getElementById("fCur").value,cat:document.getElementById("fCat").value,note:document.getElementById("fNote").value.trim(),date:document.getElementById("fDate").value,created:new Date().toISOString()};
+        const t={type,amount,acc,cur:document.getElementById("fCur").value,cat:document.getElementById("fCat").value==="__new"?"Інше":document.getElementById("fCat").value,note:document.getElementById("fNote").value.trim(),date:document.getElementById("fDate").value,created:new Date().toISOString()};
         closeSheet();await addTx(t);state.month=t.date.slice(0,7);render();toast(type==="inc"?"Дохід записано":"Витрату записано")};
     });
 }
@@ -533,9 +585,10 @@ function openRecForm(){
     <label class="f" for="rName">Назва<input id="rName" required maxlength="40" placeholder="Оренда, інтернет, Netflix"></label>
     <div class="grid3"><label class="f" for="rAmt">Сума<input id="rAmt" type="number" inputmode="decimal" step="0.01" min="0.01" required></label>
     <label class="f" for="rCur">Валюта<select id="rCur">${curOptions("UAH")}</select></label></div>
-    <div class="grid2"><label class="f" for="rCat">Категорія<select id="rCat">${catOptions("exp","Комуналка")}</select></label>
+    <div class="grid2"><label class="f" for="rCat">Категорія<select id="rCat" data-catsel="1">${catOptions("exp","Комуналка")}</select></label>
     <label class="f" for="rDay">День місяця<input id="rDay" type="number" min="1" max="31" required value="1"></label></div>
     <button class="btn" type="submit">Додати платіж</button></form>`,()=>{
+      bindNewCat(document.getElementById("rCat"));
       document.getElementById("recForm").onsubmit=e=>{e.preventDefault();
         const r={id:uid(),name:document.getElementById("rName").value.trim(),amount:parseFloat(document.getElementById("rAmt").value),cur:document.getElementById("rCur").value,cat:document.getElementById("rCat").value,day:Math.min(31,Math.max(1,parseInt(document.getElementById("rDay").value)||1)),paid:[]};
         if(!r.name||!(r.amount>0))return;
@@ -548,7 +601,7 @@ const MCC=[[[5411,5412,5422,5441,5451,5462,5499,5300,5331],"Продукти"],[
   [[4111,4112,4121,4131,4784,4789,5541,5542,5172,7523,3000],"Транспорт"],[[5912,5122,8011,8021,8031,8041,8042,8043,8049,8050,8062,8071,8099],"Здоров'я"],
   [[5611,5621,5631,5641,5651,5655,5661,5691,5699,5311,5948],"Одяг"],[[7832,7841,7922,7929,7991,7996,7997,7998,7999,5813],"Розваги"],
   [[4899,5815,5816,5817,5818],"Підписки"],[[4814,4900],"Комуналка"],[[8211,8220,8241,8244,8249,8299,5942,5943],"Освіта"],[[5992,5947,5945],"Подарунки"]];
-const KW=[[/коміс|commission|fee\b/i,"Комісії банку"],[/грошові перекази|переказ|перевод|p2p|card2card|на картку|з картки на картку/i,"Перекази людям"],[/сільпо|silpo|атб|atb|novus|фора|fora|ашан|auchan|metro|varus|рукавичк|еко ?маркет|наш край|супермаркет|продукт|grocery/i,"Продукти"],
+const KW=[[/коміс|commission|\bfee\b/i,"Комісії банку"],[/грошові перекази|переказ|перевод|p2p|card2card|на картку|з картки на картку/i,"Перекази людям"],[/сільпо|silpo|атб|atb|novus|фора|fora|ашан|auchan|metro|varus|рукавичк|еко ?маркет|наш край|супермаркет|продукт|grocery/i,"Продукти"],
   [/кафе|ресторан|кав'ярн|coffee|кава|mcdonald|kfc|пузата|піц|pizza|суші|sushi|glovo|bolt food|ресторан/i,"Кафе"],
   [/uber|bolt|uklon|таксі|taxi|wog|okko|socar|upg|brsm|азс|пальн|укрзалізниц|uz\.gov|метро|транспорт|автобус|парков/i,"Транспорт"],
   [/аптек|apteka|pharm|подорожник|бажаєм|здоров|медичн|клінік|стоматол|лаборатор|synevo|діла/i,"Здоров'я"],
@@ -562,8 +615,8 @@ const SKIP_RE=/між своїми|своїми рахунками|на банк
 function guessCat(desc,bankCat,mcc,isInc){
   const txt=(bankCat||"")+" "+(desc||"");
   if(isInc){if(/зарплат|заробітн|salary|аванс/i.test(txt))return "Зарплата";if(/поверн|refund|кешбек|cashback/i.test(txt))return "Повернення";return "Інше (дохід)"}
-  const m=parseInt(mcc,10);if(m)for(const [list,cat] of MCC)if(list.includes(m))return cat;
-  for(const [re,cat] of KW)if(re.test(txt))return cat;
+  const m=parseInt(mcc,10);if(m)for(const [list,cat] of MCC)if(list.includes(m))return mapCat(cat);
+  for(const [re,cat] of KW)if(re.test(txt))return mapCat(cat);
   return "Інше";
 }
 function parseNum(v){
@@ -717,7 +770,7 @@ function renderImport(){
   out.querySelectorAll("[data-map]").forEach(s=>s.onchange=()=>{det.map[s.dataset.map]=+s.value;buildItems();renderImport()});
   document.getElementById("mCur").onchange=e=>{det.cur=e.target.value;buildItems();renderImport()};
   out.querySelectorAll("[data-i]").forEach(c=>c.onchange=()=>{items[+c.dataset.i].on=c.checked;const n=items.filter(x=>x.on).length;const b=document.getElementById("impGo");b.textContent=`Додати ${n} операцій`;b.disabled=!n});
-  out.querySelectorAll("[data-ci]").forEach(s=>s.onchange=()=>{items[+s.dataset.ci].cat=s.value});
+  out.querySelectorAll("[data-ci]").forEach(s=>{s.setAttribute("data-catsel","1");s.onchange=()=>{if(s.value!=="__new")items[+s.dataset.ci].cat=s.value};bindNewCat(s)});
   out.querySelectorAll("[data-ti]").forEach(s=>s.onchange=()=>{const x=items[+s.dataset.ti];x.ask=false;x.cash=s.value==="cash";x.type=s.value==="cash"?"tr":s.value;x.cat=x.type==="tr"?TR_CAT:x.cat0;renderImport()});
   document.getElementById("impGo").onclick=runImport;
   document.getElementById("impAcc").onchange=e=>{imp.acc=e.target.value};
@@ -823,6 +876,7 @@ document.getElementById("view").addEventListener("click",async e=>{
   if(t.id==="seed")return seedExamples();
   if(t.dataset.import)return openImport();
   if(t.id==="bkSave")return exportBackup();
+  if(t.id==="catsBtn")return catsSheet();
   if(t.dataset.goto){state.tab=t.dataset.goto;render();window.scrollTo(0,0);return}
   if(t.id==="addRec")return openRecForm();
   if(t.id==="dedupe")return dedupe();
