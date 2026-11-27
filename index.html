@@ -77,6 +77,10 @@ button{font:inherit;color:inherit;cursor:pointer}
 .list{display:grid}
 .item{display:grid;grid-template-columns:10px 1fr auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
 .item:first-child{border-top:0}
+.acc{display:grid;grid-template-columns:1fr auto auto;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+.acc:first-child{border-top:0}.acc.tot{font-weight:700}.acc .del{color:var(--accent);font-weight:700}
+.chips button[data-accf]{border:0;cursor:pointer;background:var(--sunk);color:var(--fg);padding:8px 14px}
+.chips button[data-accf][aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
 .sw{position:relative;overflow:hidden;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 .sw .item{border-top:0;position:relative;background:var(--surface);touch-action:pan-y;transition:transform .25s ease;will-change:transform}
 .sw.drag .item{transition:none}
@@ -196,6 +200,7 @@ const SYM={UAH:"₴",EUR:"€",USD:"$"};
 const MONTHS=["січень","лютий","березень","квітень","травень","червень","липень","серпень","вересень","жовтень","листопад","грудень"];
 const MONTHS_S=["січ","лют","бер","кві","тра","чер","лип","сер","вер","жов","лис","гру"];
 const DEFAULT_SETTINGS={rates:{EUR:48,USD:41.5},budgets:{},recurring:[]};
+const DEFAULT_ACCOUNTS=[{id:"cash",name:"Готівка",short:"Готівка",start:0},{id:"raif",name:"Картка Райффайзен",short:"Картка",start:0}];
 
 const state={tab:"overview",month:ym(new Date()),tx:[],settings:structuredClone(DEFAULT_SETTINGS),mode:"none",loaded:false};
 let txCol=null,settingsRef=null;
@@ -216,7 +221,18 @@ function uid(){return Math.random().toString(36).slice(2,10)}
 
 /* ---------- storage ---------- */
 const LS_KEY="hamanets-v1";
-function lsLoad(){try{const r=JSON.parse(localStorage.getItem(LS_KEY)||"null");if(r){state.tx=r.tx||[];state.settings={...structuredClone(DEFAULT_SETTINGS),...r.settings}}}catch(e){}}
+function lsLoad(){try{const r=JSON.parse(localStorage.getItem(LS_KEY)||"null");if(r){state.tx=r.tx||[];state.settings={...structuredClone(DEFAULT_SETTINGS),...r.settings}}}catch(e){}migrateAccounts()}
+function migrateAccounts(){const st=state.settings;if(!Array.isArray(st.accounts)||!st.accounts.length){st.accounts=structuredClone(DEFAULT_ACCOUNTS);st.accSetup=false}
+  let ch=false;for(const t of state.tx)if(!t.acc){t.acc=t.importKey?"raif":"cash";ch=true}if(ch||!st._migr){st._migr=1;lsSave()}}
+const ACC=()=>state.settings.accounts||DEFAULT_ACCOUNTS;
+const accName=id=>(ACC().find(a=>a.id===id)||{}).short||"";
+const accById=id=>ACC().find(a=>a.id===id);
+function movement(id){let m=0;for(const t of state.tx){const v=toUAH(Number(t.amount)||0,t.cur||"UAH");
+    if(t.type==="tr"&&t.to){if(t.acc===id)m-=v;if(t.to===id)m+=v;continue}
+    if(t.acc!==id)continue;
+    if(t.type==="inc")m+=v;else if(t.type==="exp")m-=v;else if(t.type==="tr")m+=t.dir==="in"?v:-v}return m}
+const accBal=id=>(Number((accById(id)||{}).start)||0)+movement(id);
+function accOptions(sel){return ACC().map(a=>`<option value="${a.id}" ${a.id===sel?"selected":""}>${esc(a.name)}</option>`).join("")}
 function lsSave(){try{localStorage.setItem(LS_KEY,JSON.stringify({tx:state.tx,settings:state.settings}))}catch(e){}}
 
 let settingsQueue=Promise.resolve();
@@ -226,7 +242,7 @@ function saveSettings(){
     settingsQueue=settingsQueue.then(()=>settingsRef.set(body)).catch(()=>toast("Не вдалося зберегти налаштування"));
   }else lsSave();
 }
-async function addTx(t){
+async function addTx(t){if(!t.acc)t.acc=state.settings.lastAcc||"cash";
   if(state.mode==="db"){
     try{await txCol.add(t)}catch(e){toast(e&&e.code==="quota_exceeded"?"Сховище заповнене: видаліть старі операції":"Не вдалося зберегти операцію")}
   }else{state.tx.push({...t,id:uid()});lsSave();render()}
@@ -354,8 +370,8 @@ function txRow(t){
   const conv=cur!=="UAH"?`<small>≈ ${uah(toUAH(Number(t.amount),cur))}</small>`:"";
   const [y,m,d]=(t.date||"").split("-");
   return `<div class="sw" data-sw="${esc(t.id)}"><div class="sw-left"><button class="sw-tr" data-swtr="${esc(t.id)}" tabindex="-1">${tr?"Не переказ":"Переказ"}</button></div><div class="sw-act"><button class="sw-del" data-swdel="${esc(t.id)}" tabindex="-1">Видалити</button></div><div class="item ${tr?"is-tr":""}"><i class="dot" style="background:${catColor(t.cat)}"></i>
-    <div class="t"><b>${esc(t.note||t.cat)}</b><small>${tr?"переказ, не рахується · "+(t.dir==="in"?"надійшло":"списано"):esc(t.cat)} · ${d}.${m}${t.example?" · приклад":""}</small></div>
-    <div class="amt ${inc?"inc":""}">${tr?(t.dir==="in"?"↓ ":"↑ "):inc?"+":"−"}${money(Number(t.amount),cur)}${conv}</div></div></div>`;
+    <div class="t"><b>${esc(t.note||t.cat)}</b><small>${tr&&t.to?esc(accName(t.acc)+" → "+accName(t.to)):tr?"переказ · "+(t.dir==="in"?"надійшло":"списано")+" · "+esc(accName(t.acc)):esc(t.cat)+" · "+esc(accName(t.acc))} · ${d}.${m}${t.example?" · приклад":""}</small></div>
+    <div class="amt ${inc?"inc":""}">${tr&&t.to?"⇄ ":tr?(t.dir==="in"?"↓ ":"↑ "):inc?"+":"−"}${money(Number(t.amount),cur)}${conv}</div></div></div>`;
 }
 function emptyBlock(){
   return `<div class="empty"><div>Тут з'являться Ваші доходи й витрати. Натисніть <b>+</b>, щоб додати операцію, або завантажте виписку з банку.</div>
@@ -366,9 +382,10 @@ function vOverview(){
   const due=dueList().filter(r=>!r.paid&&r.diff<=5);
   const bkDays=daysSince(state.settings.lastBackup);const bkWarn=state.tx.length>0&&bkDays>14;
   const recent=monthTx(state.month).sort((a,b)=>(b.date+(b.created||"")).localeCompare(a.date+(a.created||""))).slice(0,5);
-  return `<div class="card hero"><div class="lbl">Залишок за ${monthLabel(state.month)}</div>
+  return `<div class="card hero"><div class="lbl">Доходи мінус витрати · ${monthLabel(state.month)}</div>
     <div class="big">${s.bal<0?"−":""}${uah(Math.abs(s.bal))}</div>
     <div class="row"><div><span class="lbl">Доходи</span><b>${uah(s.inc)}</b></div><div><span class="lbl">Витрати</span><b>${uah(s.exp)}</b></div></div></div>
+  ${accountsCard()}
   ${(bs.length||due.length||bkWarn)?`<div class="card"><h2>Зверніть увагу</h2><div class="chips">
     ${bs.map(b=>`<span class="chip ${b.level}">${esc(b.cat)}: ${Math.round(b.p*100)}% ліміту</span>`).join("")}
     ${bkWarn?`<button class="chip warn" style="border:0" data-goto="budget">Резервна копія: ${bkDays===Infinity?"ще не робили":bkDays+" дн. тому"}</button>`:""}
@@ -378,14 +395,38 @@ function vOverview(){
   <div class="card"><h2>Півроку в динаміці</h2>${bars()}</div>
   <div class="card"><h2>Останні операції</h2>${recent.length?`<div class="list">${recent.map(txRow).join("")}</div>`:emptyBlock()}</div>`;
 }
+function accountsCard(){const st=state.settings;
+  if(st.accSetup===false)return `<div class="card"><h2>Рахунки</h2><div class="note">Вкажіть, скільки грошей у Вас зараз, і гаманець показуватиме реальні залишки по готівці й картці.</div><button class="btn" id="accSetup">Вказати залишки</button></div>`;
+  const rows=ACC().map(a=>`<div class="acc"><span><b>${esc(a.name)}</b></span><span class="amt">${accBal(a.id)<0?"−":""}${uah(Math.abs(accBal(a.id)))}</span><button class="del" data-recon="${a.id}">Звірити</button></div>`).join("");
+  const tot=ACC().reduce((x,a)=>x+accBal(a.id),0);
+  return `<div class="card"><div class="top"><h2>Рахунки</h2><button class="btn sm ghost" id="accMove">Переказ між рахунками</button></div><div class="list">${rows}<div class="acc tot"><span>Разом</span><span class="amt">${tot<0?"−":""}${uah(Math.abs(tot))}</span><span></span></div></div></div>`}
+function setupSheet(){openSheet("Скільки зараз є?",`<div class="note">Подивіться в гаманець і в застосунок банку та впишіть поточні суми. Усі вже внесені операції гаманець врахує сам.</div><div class="note">Порада: спершу імпортуйте свіжу виписку з картки, а потім вказуйте залишки. Так вони зійдуться точно.</div>
+  ${ACC().map(a=>`<label class="f" for="st_${a.id}">${esc(a.name)}, ₴<input id="st_${a.id}" type="number" inputmode="decimal" step="0.01" value="${Math.round(accBal(a.id)*100)/100}"></label>`).join("")}
+  <button class="btn" id="stGo">Зберегти</button>`,()=>{document.getElementById("stGo").onclick=()=>{for(const a of ACC()){const v=parseFloat(document.getElementById("st_"+a.id).value);if(isFinite(v))a.start=Math.round((v-movement(a.id))*100)/100}
+    state.settings.accSetup=true;saveSettings();closeSheet();render();toast("Залишки збережено")}})}
+function reconSheet(id){const a=accById(id);const b=accBal(id);openSheet("Звірити: "+a.name,`<div class="note">У гаманці зараз <b>${uah(b)}</b>. Скільки насправді?</div>
+  <label class="f" for="rcV">Реальна сума, ₴<input id="rcV" type="number" inputmode="decimal" step="0.01" value="${Math.round(b*100)/100}"></label>
+  <div class="note" id="rcHint">Різницю запишу операцією «Коригування», щоб залишок зійшовся.</div><button class="btn" id="rcGo">Звірити</button>`,()=>{
+  const inp=document.getElementById("rcV");inp.oninput=()=>{const d=(parseFloat(inp.value)||0)-b;document.getElementById("rcHint").textContent=Math.abs(d)<0.01?"Усе сходиться.":d<0?`Бракує ${uah(-d)}: запишу як витрату «Коригування (не записані витрати)».`:`Зайві ${uah(d)}: запишу як дохід «Коригування».`};
+  document.getElementById("rcGo").onclick=async()=>{const d=Math.round(((parseFloat(inp.value)||0)-b)*100)/100;closeSheet();if(Math.abs(d)<0.01){toast("Усе сходиться");return}
+    await addTx({type:d<0?"exp":"inc",amount:Math.abs(d),cur:"UAH",acc:id,cat:d<0?"Інше":"Інше (дохід)",note:d<0?"Коригування (не записані витрати)":"Коригування",date:today(),created:new Date().toISOString()});render();toast("Залишок вирівняно")}})}
+function moveSheet(){const A=ACC();openSheet("Переказ між рахунками",`<div class="grid2"><label class="f" for="mvF">Звідки<select id="mvF">${accOptions(A[0].id)}</select></label><label class="f" for="mvT">Куди<select id="mvT">${accOptions(A[1]?A[1].id:A[0].id)}</select></label></div>
+  <label class="f" for="mvA">Сума, ₴<input id="mvA" type="number" inputmode="decimal" step="0.01" min="0.01"></label>
+  <label class="f" for="mvD">Дата<input id="mvD" type="date" value="${today()}"></label>
+  <div class="note">Переказ не рахується ні доходом, ні витратою: гроші просто переходять з одного рахунку на інший.</div><button class="btn" id="mvGo">Зберегти</button>`,()=>{
+  document.getElementById("mvGo").onclick=async()=>{const f=document.getElementById("mvF").value,t=document.getElementById("mvT").value,a=parseFloat(document.getElementById("mvA").value);
+    if(!(a>0)){toast("Вкажіть суму");return}if(f===t){toast("Оберіть різні рахунки");return}
+    closeSheet();await addTx({type:"tr",acc:f,to:t,amount:a,cur:"UAH",cat:TR_CAT,note:accName(f)+" → "+accName(t),date:document.getElementById("mvD").value,created:new Date().toISOString()});render();toast("Переказ записано")}})}
 function vOps(){
-  const list=monthTx(state.month).sort((a,b)=>(b.date+(b.created||"")).localeCompare(a.date+(a.created||"")));
+  const af=state.accFilter||"all";
+  const list=monthTx(state.month).filter(t=>af==="all"||t.acc===af||t.to===af).sort((a,b)=>(b.date+(b.created||"")).localeCompare(a.date+(a.created||"")));
   const dn=dupCount();const tn=transferCandidates().length;
   const imp=`<div class="card imp-card"><div class="top"><div><h2>Виписка з банку</h2><small style="color:var(--muted)">PDF, Excel або CSV з будь-якого банку</small></div><button class="btn sm" data-import="1">Імпорт</button></div>
     ${dn?`<div class="top" style="border-top:1px solid var(--line);padding-top:12px"><small style="color:var(--muted)">Схоже на дублі: ${dn}</small><button class="btn sm ghost" id="dedupe">Прибрати дублікати</button></div>`:""}
     ${tn?`<div class="top" style="border-top:1px solid var(--line);padding-top:12px"><small style="color:var(--muted)">Схоже на перекази: ${tn}</small><button class="btn sm ghost" id="findTr">Знайти перекази</button></div>`:""}</div>`;
-  if(!list.length)return imp+`<div class="card">${emptyBlock()}</div>`;
-  return imp+vOpsList(list);
+  const chips=`<div class="chips">${[["all","Усі"],...ACC().map(a=>[a.id,a.short])].map(([id,l])=>`<button class="chip ${af===id?"on":""}" data-accf="${id}" aria-pressed="${af===id}">${esc(l)}</button>`).join("")}</div>`;
+  if(!list.length)return imp+chips+`<div class="card">${emptyBlock()}</div>`;
+  return imp+chips+vOpsList(list);
 }
 function vOpsList(list){
   const groups={};for(const t of list)(groups[t.date]=groups[t.date]||[]).push(t);
@@ -448,7 +489,7 @@ function openTxForm(){
     <div class="seg" role="group" aria-label="Тип"><button type="button" data-type="exp" aria-pressed="true">Витрата</button><button type="button" data-type="inc" aria-pressed="false">Дохід</button></div>
     <div class="grid3"><label class="f" for="fAmt">Сума<input id="fAmt" type="number" inputmode="decimal" step="0.01" min="0.01" required placeholder="0"></label>
     <label class="f" for="fCur">Валюта<select id="fCur">${curOptions("UAH")}</select></label></div>
-    <label class="f" for="fCat">Категорія<select id="fCat">${catOptions("exp")}</select></label>
+    <div class="grid2"><label class="f" for="fCat">Категорія<select id="fCat">${catOptions("exp")}</select></label><label class="f" for="fAcc">Рахунок<select id="fAcc">${accOptions(state.settings.lastAcc||"cash")}</select></label></div>
     <label class="f" for="fNote">Коментар<input id="fNote" maxlength="80" placeholder="Наприклад: Сільпо, таксі до роботи"></label>
     <label class="f" for="fDate">Дата<input id="fDate" type="date" value="${state.month===ym(new Date())?today():state.month+"-01"}" required></label>
     <button class="btn" type="submit">Зберегти</button></form>`,()=>{
@@ -456,7 +497,8 @@ function openTxForm(){
       f.querySelectorAll("[data-type]").forEach(b=>b.onclick=()=>{type=b.dataset.type;f.querySelectorAll("[data-type]").forEach(x=>x.setAttribute("aria-pressed",x===b));document.getElementById("fCat").innerHTML=catOptions(type)});
       setTimeout(()=>document.getElementById("fAmt").focus(),50);
       f.onsubmit=async e=>{e.preventDefault();const amount=parseFloat(document.getElementById("fAmt").value);if(!(amount>0))return;
-        const t={type,amount,cur:document.getElementById("fCur").value,cat:document.getElementById("fCat").value,note:document.getElementById("fNote").value.trim(),date:document.getElementById("fDate").value,created:new Date().toISOString()};
+        const acc=document.getElementById("fAcc").value;state.settings.lastAcc=acc;saveSettings();
+        const t={type,amount,acc,cur:document.getElementById("fCur").value,cat:document.getElementById("fCat").value,note:document.getElementById("fNote").value.trim(),date:document.getElementById("fDate").value,created:new Date().toISOString()};
         closeSheet();await addTx(t);state.month=t.date.slice(0,7);render();toast(type==="inc"?"Дохід записано":"Витрату записано")};
     });
 }
@@ -637,6 +679,7 @@ function renderImport(){
       <label class="f" for="mCat">Категорія банку<select id="mCat" data-map="cat">${opt(det.map.cat,1)}</select></label>
       <label class="f" for="mCur">Валюта рахунку<select id="mCur">${curOptions(det.cur)}</select></label>
     </div></details>
+    <label class="f" for="impAcc">Рахунок для цієї виписки<select id="impAcc">${accOptions(imp.acc||"raif")}</select></label>
     <div class="note">Знайдено ${items.length} операцій${dups?`, з них ${dups} вже є в гаманці`:""}. ${items.some(x=>x.type==="tr")?`Перекази (${items.filter(x=>x.type==="tr").length}) я позначила окремо: вони не рахуються ні в доходах, ні у витратах.${items.some(x=>x.ask)?" Рядки з жовтою позначкою перевірте: це дохід чи переказ?":""}`:""} Перевірте категорії.</div>
     <div class="imp-list">${items.map((x,i)=>`<div class="imp-row ${x.dup?"dup":""}">
       <input type="checkbox" id="ic${i}" data-i="${i}" ${x.on?"checked":""} ${x.dup?"disabled":""} aria-label="Імпортувати">
@@ -649,8 +692,9 @@ function renderImport(){
   document.getElementById("mCur").onchange=e=>{det.cur=e.target.value;buildItems();renderImport()};
   out.querySelectorAll("[data-i]").forEach(c=>c.onchange=()=>{items[+c.dataset.i].on=c.checked;const n=items.filter(x=>x.on).length;const b=document.getElementById("impGo");b.textContent=`Додати ${n} операцій`;b.disabled=!n});
   out.querySelectorAll("[data-ci]").forEach(s=>s.onchange=()=>{items[+s.dataset.ci].cat=s.value});
-  out.querySelectorAll("[data-ti]").forEach(s=>s.onchange=()=>{const x=items[+s.dataset.ti];x.type=s.value;x.ask=false;x.cat=x.type==="tr"?TR_CAT:x.cat0;renderImport()});
+  out.querySelectorAll("[data-ti]").forEach(s=>s.onchange=()=>{const x=items[+s.dataset.ti];x.type=s.value;x.ask=false;if(x.type!=="tr")x.cash=false;x.cat=x.type==="tr"?TR_CAT:x.cat0;renderImport()});
   document.getElementById("impGo").onclick=runImport;
+  document.getElementById("impAcc").onchange=e=>{imp.acc=e.target.value};
 }
 let importing=false;
 async function runImport(){
@@ -660,7 +704,8 @@ async function runImport(){
   importing=true;
   const btn=document.getElementById("impGo");btn.disabled=true;const pr=document.getElementById("impProg");pr.hidden=false;
   const c=new Date().toISOString();let ok=0;
-  const docs=list.map(x=>({type:x.type,dir:x.dir,amount:x.amount,cur:x.cur,cat:x.type==="tr"?TR_CAT:x.cat,prevCat:x.type==="tr"?x.cat0:undefined,note:x.note,date:x.date,created:c,src:"import",importKey:x.importKey})).map(d=>{if(d.prevCat===undefined)delete d.prevCat;return d});
+  const iacc=imp.acc||"raif";
+  const docs=list.map(x=>({type:x.type,dir:x.dir,acc:x.cash?"cash":iacc,to:x.cash?iacc:undefined,amount:x.amount,cur:x.cur,cat:x.type==="tr"?TR_CAT:x.cat,prevCat:x.type==="tr"?x.cat0:undefined,note:x.note,date:x.date,created:c,src:"import",importKey:x.importKey})).map(d=>{if(d.prevCat===undefined)delete d.prevCat;if(d.to===undefined)delete d.to;if(d.to)delete d.dir;return d});
   if(state.mode==="db"){
     for(const d of docs){
       let tries=0;
@@ -689,24 +734,24 @@ function classifyImport(items){const live=items.filter(x=>!x.dup);
   for(const x of live)if(x.skip){x.type="tr";x.cat=TR_CAT;x.reason="переказ між своїми рахунками"}
   for(const [i,o] of findPairs(live.filter(x=>x.type!=="tr"))){for(const x of [i,o]){x.type="tr";x.cat=TR_CAT}i.reason="поповнення, далі переказ на "+money(o.amount,o.cur);o.reason="переказ після поповнення"}
   const manual=state.tx.filter(t=>!t.importKey&&!t.example&&t.type==="inc");const taken=new Set();
-  for(const x of live.filter(x=>x.type==="inc")){const m=cashMatch(x,manual,taken);if(m){taken.add(m);x.type="tr";x.cat=TR_CAT;x.manual=false;x.on=!x.dup;x.reason=`схоже, готівка на картку («${(m.note||m.cat).slice(0,20)}» ${m.date.slice(8,10)}.${m.date.slice(5,7)})`}}
+  for(const x of live.filter(x=>x.type==="inc")){const m=cashMatch(x,manual,taken);if(m){taken.add(m);x.type="tr";x.cash=true;x.cat=TR_CAT;x.manual=false;x.on=!x.dup;x.reason=`Готівка → Картка: схоже, Ваша готівка («${(m.note||m.cat).slice(0,20)}» ${m.date.slice(8,10)}.${m.date.slice(5,7)})`}}
   for(const x of live.filter(x=>x.type==="inc"))if(TOPUP_RE.test(x.note||"")&&!SALARY_RE.test(x.note||"")){x.type="tr";x.cat=TR_CAT;x.ask=true;x.reason="перевірте: дохід чи переказ?"}}
 function transferCandidates(){const base=state.tx.filter(t=>t.type!=="tr"&&!t.example);const out=[];const marked=new Set();
   for(const [i,o] of findPairs(base)){marked.add(i);marked.add(o);out.push({ids:[i.id,o.id],label:`${i.note||i.cat} → ${o.note||o.cat}`,sub:`+${money(i.amount,i.cur)} і −${money(o.amount,o.cur)}`,on:true})}
   const manual=base.filter(t=>!t.importKey&&t.type==="inc");const taken=new Set();
-  for(const x of base.filter(t=>t.importKey&&t.type==="inc"&&!marked.has(t))){const m=cashMatch(x,manual,taken);if(m){taken.add(m);marked.add(x);out.push({ids:[x.id],label:x.note||x.cat,sub:`+${money(x.amount,x.cur)} · схоже, готівка «${(m.note||m.cat).slice(0,20)}» на картку`,on:true})}}
+  for(const x of base.filter(t=>t.importKey&&t.type==="inc"&&!marked.has(t))){const m=cashMatch(x,manual,taken);if(m){taken.add(m);marked.add(x);out.push({ids:[x.id],cash:true,label:x.note||x.cat,sub:`+${money(x.amount,x.cur)} · Готівка → Картка (схоже, «${(m.note||m.cat).slice(0,20)}»)`,on:true})}}
   for(const x of base.filter(t=>t.importKey&&t.type==="inc"&&!marked.has(t)&&TOPUP_RE.test(t.note||"")&&!SALARY_RE.test(t.note||"")))out.push({ids:[x.id],label:x.note||x.cat,sub:`+${money(x.amount,x.cur)} · дохід чи переказ?`,on:false});
   return out}
 function trPatch(t){return t.type==="tr"?{type:t.dir==="in"?"inc":"exp",cat:t.prevCat||(t.dir==="in"?"Інше (дохід)":"Інше")}:{type:"tr",dir:t.type==="inc"?"in":"out",prevCat:t.cat,cat:TR_CAT}}
 async function patchTx(t,patch){if(state.mode==="db"){try{await txCol.doc(t.id).update(patch)}catch(e){toast("Не вдалося змінити")}}else{Object.assign(t,patch);lsSave()}}
-async function toggleTr(id){const t=state.tx.find(x=>x.id===id);if(!t)return;const was=t.type==="tr";await patchTx(t,trPatch(t));render();toast(was?"Знову рахується":"Позначено як переказ: не рахується")}
+async function toggleTr(id){const t=state.tx.find(x=>x.id===id);if(!t)return;if(t.to){toast("Це переказ між Вашими рахунками. Щоб змінити, видаліть його свайпом вліво");return}const was=t.type==="tr";await patchTx(t,trPatch(t));render();toast(was?"Знову рахується":"Позначено як переказ: не рахується")}
 function findTransfersSheet(){const c=transferCandidates();if(!c.length){toast("Переказів не знайдено");return}
   openSheet("Перекази",`<div class="note">Позначені галочкою операції стануть переказами: вони не рахуватимуться ні в доходах, ні у витратах. Пари «поповнення → переказ» і готівку, покладену на картку, я позначила сама. Поповнення без пари — на Ваш розсуд.</div>
     <div class="imp-list">${c.map((x,k)=>`<div class="imp-row"><input type="checkbox" id="tf${k}" data-tf="${k}" ${x.on?"checked":""} aria-label="Позначити як переказ">
       <div style="min-width:0"><label for="tf${k}" style="font-weight:600;overflow-wrap:anywhere">${esc(x.label)}</label><br><small>${esc(x.sub)}</small></div><span></span></div>`).join("")}</div>
     <button class="btn" id="tfGo">Позначити як перекази</button>`,()=>{
       document.getElementById("tfGo").onclick=async()=>{let n=0;for(const [k,x] of c.entries()){if(!document.getElementById("tf"+k)?.checked)continue;
-        for(const id of x.ids){const t=state.tx.find(z=>z.id===id);if(t&&t.type!=="tr"){await patchTx(t,trPatch(t));n++}}}
+        for(const id of x.ids){const t=state.tx.find(z=>z.id===id);if(t&&t.type!=="tr"){await patchTx(t,x.cash?{type:"tr",acc:"cash",to:t.acc||"raif",prevCat:t.cat,cat:TR_CAT}:trPatch(t));n++}}}
         closeSheet();render();toast(`Позначено переказами: ${n}`)}})}
 
 /* ---------- swipe to delete ---------- */
@@ -751,6 +796,10 @@ document.getElementById("view").addEventListener("click",async e=>{
   if(t.dataset.goto){state.tab=t.dataset.goto;render();window.scrollTo(0,0);return}
   if(t.id==="addRec")return openRecForm();
   if(t.id==="dedupe")return dedupe();
+  if(t.id==="accSetup")return setupSheet();
+  if(t.id==="accMove")return moveSheet();
+  if(t.dataset.recon)return reconSheet(t.dataset.recon);
+  if(t.dataset.accf){state.accFilter=t.dataset.accf;render();return}
   if(t.id==="findTr")return findTransfersSheet();
   if(t.dataset.del){if(!t.classList.contains("armed")){t.classList.add("armed");t.textContent="Точно видалити?";setTimeout(()=>{t.classList.remove("armed");t.textContent="Видалити"},3000);return}
     await delTx(t.dataset.del);toast("Операцію видалено");return}
